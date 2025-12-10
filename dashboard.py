@@ -222,10 +222,15 @@ def screen_stocks() -> dict:
         if abs(stock['price_change_20d']) < 0.10:
             stock['score_longterm'] += 15
     
-    # Sort and get top 25 picks for each category
+    # Get top picks by score, then sort by price (highest to lowest)
     daytrade_picks = sorted(results, key=lambda x: x['score_daytrade'], reverse=True)[:25]
+    daytrade_picks = sorted(daytrade_picks, key=lambda x: x['price'], reverse=True)
+    
     swing_picks = sorted(results, key=lambda x: x['score_swing'], reverse=True)[:25]
+    swing_picks = sorted(swing_picks, key=lambda x: x['price'], reverse=True)
+    
     longterm_picks = sorted(results, key=lambda x: x['score_longterm'], reverse=True)[:25]
+    longterm_picks = sorted(longterm_picks, key=lambda x: x['price'], reverse=True)
     
     return {
         'daytrade': daytrade_picks,

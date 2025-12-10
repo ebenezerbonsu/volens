@@ -1379,7 +1379,7 @@ app.layout = html.Div([
                         ], md=3),
                         dbc.Col([
                             dbc.Label("Investment Timeline", className="text-muted small"),
-                            dcc.Dropdown(
+                            dbc.Select(
                                 id="investment-timeline",
                                 options=[
                                     {'label': '1 Year', 'value': 1},
@@ -1394,12 +1394,8 @@ app.layout = html.Div([
                                     {'label': '10 Years', 'value': 10},
                                 ],
                                 value=2,
-                                clearable=False,
-                                style={
-                                    'backgroundColor': '#1a1a2e',
-                                    'fontFamily': 'JetBrains Mono',
-                                },
-                                className="dash-dropdown-dark"
+                                className="bg-dark text-light border-secondary",
+                                style={'fontFamily': 'JetBrains Mono'}
                             )
                         ], md=2),
                         dbc.Col([

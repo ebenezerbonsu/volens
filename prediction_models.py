@@ -121,6 +121,7 @@ class LSTMPredictor:
     """
     LSTM (Long Short-Term Memory) Neural Network for volatility prediction
     Captures complex non-linear patterns in volatility dynamics
+    Note: Requires TensorFlow - falls back gracefully if not available
     """
     
     def __init__(self, lookback: int = 60, units: int = 50):
@@ -129,6 +130,8 @@ class LSTMPredictor:
             lookback: Number of past days to use for prediction
             units: Number of LSTM units
         """
+        if not LSTM_AVAILABLE:
+            raise ImportError("TensorFlow is required for LSTM predictions but is not installed")
         self.lookback = lookback
         self.units = units
         self.model = None
@@ -143,8 +146,10 @@ class LSTMPredictor:
             y.append(target[i])
         return np.array(X), np.array(y)
     
-    def _build_model(self, input_shape: Tuple) -> Sequential:
+    def _build_model(self, input_shape: Tuple):
         """Build LSTM model architecture"""
+        if not LSTM_AVAILABLE:
+            return None
         model = Sequential([
             LSTM(self.units, return_sequences=True, input_shape=input_shape),
             Dropout(0.2),
@@ -265,13 +270,20 @@ class EnsemblePredictor:
     """
     Ensemble model combining GARCH and LSTM predictions
     Weighted average based on recent performance
+    Falls back to GARCH-only if LSTM is not available
     """
     
     def __init__(self, garch_weight: float = 0.5):
         self.garch = GARCHPredictor(p=1, q=1)
-        self.lstm = LSTMPredictor(lookback=30, units=32)
-        self.garch_weight = garch_weight
-        self.lstm_weight = 1 - garch_weight
+        self.lstm = None
+        self.lstm_available = LSTM_AVAILABLE
+        if LSTM_AVAILABLE:
+            try:
+                self.lstm = LSTMPredictor(lookback=30, units=32)
+            except:
+                self.lstm_available = False
+        self.garch_weight = 1.0 if not self.lstm_available else garch_weight
+        self.lstm_weight = 0.0 if not self.lstm_available else (1 - garch_weight)
         
     def fit(self, engine: VolatilityEngine, epochs: int = 30) -> Dict:
         """Fit both models"""
@@ -280,34 +292,43 @@ class EnsemblePredictor:
         # Fit GARCH
         garch_results = self.garch.fit(engine.data['Returns'])
         
-        # Fit LSTM
-        lstm_results = self.lstm.fit(vol_df, epochs=epochs)
+        results = {'garch': garch_results}
         
-        return {
-            'garch': garch_results,
-            'lstm': lstm_results
-        }
+        # Fit LSTM if available
+        if self.lstm_available and self.lstm:
+            lstm_results = self.lstm.fit(vol_df, epochs=epochs)
+            results['lstm'] = lstm_results
+        
+        return results
     
     def forecast(self, engine: VolatilityEngine, horizon: int = 30) -> pd.DataFrame:
         """Generate ensemble forecast"""
         vol_df = engine.calculate_all_volatilities()
         
         garch_forecast = self.garch.forecast(horizon)
-        lstm_forecast = self.lstm.forecast(vol_df, horizon)
         
-        # Weighted ensemble
-        ensemble_vol = (
-            self.garch_weight * garch_forecast['Volatility'].values +
-            self.lstm_weight * lstm_forecast['Volatility'].values
-        )
-        
-        return pd.DataFrame({
-            'GARCH': garch_forecast['Volatility'].values,
-            'LSTM': lstm_forecast['Volatility'].values,
-            'Ensemble': ensemble_vol,
-            'Lower_CI': ensemble_vol * 0.8,
-            'Upper_CI': ensemble_vol * 1.2
-        }, index=garch_forecast.index)
+        if self.lstm_available and self.lstm:
+            lstm_forecast = self.lstm.forecast(vol_df, horizon)
+            # Weighted ensemble
+            ensemble_vol = (
+                self.garch_weight * garch_forecast['Volatility'].values +
+                self.lstm_weight * lstm_forecast['Volatility'].values
+            )
+            return pd.DataFrame({
+                'GARCH': garch_forecast['Volatility'].values,
+                'LSTM': lstm_forecast['Volatility'].values,
+                'Ensemble': ensemble_vol,
+                'Lower_CI': ensemble_vol * 0.8,
+                'Upper_CI': ensemble_vol * 1.2
+            }, index=garch_forecast.index)
+        else:
+            # GARCH only
+            return pd.DataFrame({
+                'GARCH': garch_forecast['Volatility'].values,
+                'Ensemble': garch_forecast['Volatility'].values,
+                'Lower_CI': garch_forecast['Lower_CI'].values,
+                'Upper_CI': garch_forecast['Upper_CI'].values
+            }, index=garch_forecast.index)
 
 
 class VolatilityPredictor:

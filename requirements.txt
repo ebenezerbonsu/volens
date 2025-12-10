@@ -1,0 +1,22 @@
+# Stock Volatility Predictor - Dependencies
+# Data & Analysis
+yfinance>=0.2.33
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Machine Learning
+scikit-learn>=1.3.0
+arch>=6.2.0
+
+# Visualization
+plotly>=5.18.0
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
+
+# Utilities
+python-dateutil>=2.8.2
+requests>=2.31.0
+
+# Server
+gunicorn>=21.0.0
+

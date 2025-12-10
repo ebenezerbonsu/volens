@@ -19,75 +19,45 @@ import concurrent.futures
 import warnings
 warnings.filterwarnings('ignore')
 
-# Extended stock universe for comprehensive scanning (150+ stocks)
+# Optimized stock universe - Top 80 most liquid stocks for faster scanning
 STOCK_UNIVERSE = [
-    # Tech Giants & Software
-    'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'INTC',
-    'CRM', 'ORCL', 'ADBE', 'NOW', 'SNOW', 'PLTR', 'UBER', 'LYFT', 'DASH', 'ABNB',
-    'SQ', 'SHOP', 'TWLO', 'ZM', 'DOCU', 'OKTA', 'CRWD', 'ZS', 'NET', 'DDOG',
-    'MDB', 'ESTC', 'PATH', 'U', 'RBLX', 'TTWO', 'EA', 'ATVI',
+    # Tech Giants (most liquid)
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'INTC',
+    'CRM', 'ORCL', 'ADBE', 'PLTR', 'UBER', 'ABNB', 'SHOP', 'CRWD', 'NET', 'DDOG',
     
     # Semiconductors
-    'AVGO', 'QCOM', 'TXN', 'MU', 'LRCX', 'AMAT', 'KLAC', 'MRVL', 'ON', 'SWKS',
-    'MCHP', 'ADI', 'NXPI', 'MPWR', 'ENTG', 'ARM', 'SMCI',
+    'AVGO', 'QCOM', 'MU', 'AMAT', 'MRVL', 'ARM', 'SMCI',
     
-    # Finance & Banking
-    'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'USB', 'PNC', 'TFC', 'SCHW',
-    'BLK', 'BX', 'KKR', 'APO', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST',
-    
-    # Payments & Fintech
-    'V', 'MA', 'PYPL', 'AXP', 'COF', 'DFS', 'SYF',
+    # Finance & Fintech
+    'JPM', 'BAC', 'GS', 'MS', 'WFC', 'BLK', 'COIN', 'SOFI',
+    'V', 'MA', 'PYPL', 'AXP',
     
     # Healthcare & Biotech
-    'JNJ', 'UNH', 'PFE', 'ABBV', 'MRK', 'LLY', 'TMO', 'ABT', 'DHR', 'BMY',
-    'AMGN', 'GILD', 'VRTX', 'REGN', 'BIIB', 'MRNA', 'BNTX', 'ISRG', 'MDT', 'SYK',
+    'JNJ', 'UNH', 'PFE', 'ABBV', 'MRK', 'LLY', 'MRNA', 'ISRG',
     
     # Consumer & Retail
-    'WMT', 'COST', 'TGT', 'HD', 'LOW', 'TJX', 'ROST', 'DG', 'DLTR',
-    'NKE', 'LULU', 'GPS', 'ANF', 'DECK',
-    'SBUX', 'MCD', 'CMG', 'DPZ', 'YUM', 'QSR',
-    'KO', 'PEP', 'MNST', 'KDP',
-    
-    # E-commerce & Internet
-    'BABA', 'JD', 'PDD', 'BIDU', 'NTES', 'SE', 'MELI', 'ETSY', 'W', 'CHWY',
+    'WMT', 'COST', 'HD', 'NKE', 'SBUX', 'MCD', 'KO', 'PEP',
     
     # Streaming & Entertainment
-    'NFLX', 'DIS', 'WBD', 'PARA', 'SPOT', 'LYV', 'MSGS',
+    'NFLX', 'DIS', 'SPOT',
     
-    # Social Media & Advertising
-    'SNAP', 'PINS', 'TWTR', 'TTD', 'MGNI', 'PUBM',
+    # Social Media
+    'SNAP', 'PINS', 'TTD',
     
     # Energy
-    'XOM', 'CVX', 'COP', 'OXY', 'SLB', 'HAL', 'EOG', 'PXD', 'DVN', 'FANG',
-    'MPC', 'VLO', 'PSX',
+    'XOM', 'CVX', 'COP', 'OXY', 'SLB',
     
     # Clean Energy & EV
-    'ENPH', 'SEDG', 'FSLR', 'RUN', 'PLUG', 'BE', 'CHPT', 'LCID', 'RIVN', 'NIO',
-    'XPEV', 'LI', 'FSR',
+    'ENPH', 'FSLR', 'RIVN', 'NIO', 'LCID',
     
     # Industrial & Aerospace
-    'CAT', 'DE', 'BA', 'RTX', 'LMT', 'NOC', 'GD', 'GE', 'HON', 'MMM',
-    'EMR', 'ETN', 'ROK', 'CMI', 'PCAR', 'URI',
+    'CAT', 'BA', 'RTX', 'GE', 'HON',
     
-    # Materials & Mining
-    'LIN', 'APD', 'ECL', 'SHW', 'NEM', 'FCX', 'GOLD', 'AA', 'CLF', 'X',
+    # ETFs
+    'SPY', 'QQQ', 'IWM', 'ARKK', 'SOXL', 'TQQQ',
     
-    # Real Estate
-    'AMT', 'PLD', 'CCI', 'EQIX', 'SPG', 'O', 'WELL', 'AVB', 'EQR',
-    
-    # Telecom
-    'T', 'VZ', 'TMUS', 'CMCSA', 'CHTR',
-    
-    # ETFs (for reference/comparison)
-    'SPY', 'QQQ', 'IWM', 'DIA', 'ARKK', 'XLF', 'XLE', 'XLK', 'XLV', 'XLI',
-    'GLD', 'SLV', 'USO', 'TLT', 'HYG', 'VXX', 'SOXL', 'TQQQ',
-    
-    # High Volatility / Meme / Crypto-adjacent
-    'GME', 'AMC', 'BBBY', 'BB', 'MARA', 'RIOT', 'CLSK', 'BITF', 'HUT',
-    'MSTR', 'CIFR', 'IREN',
-    
-    # SPACs & Recent IPOs
-    'DWAC', 'IONQ', 'JOBY', 'LILM', 'RUM', 'DNA',
+    # High Volatility / Meme / Crypto
+    'GME', 'AMC', 'MARA', 'RIOT', 'MSTR',
 ]
 
 
@@ -252,10 +222,10 @@ def screen_stocks() -> dict:
         if abs(stock['price_change_20d']) < 0.10:
             stock['score_longterm'] += 15
     
-    # Sort and get top 50 picks for each category
-    daytrade_picks = sorted(results, key=lambda x: x['score_daytrade'], reverse=True)[:50]
-    swing_picks = sorted(results, key=lambda x: x['score_swing'], reverse=True)[:50]
-    longterm_picks = sorted(results, key=lambda x: x['score_longterm'], reverse=True)[:50]
+    # Sort and get top 25 picks for each category
+    daytrade_picks = sorted(results, key=lambda x: x['score_daytrade'], reverse=True)[:25]
+    swing_picks = sorted(results, key=lambda x: x['score_swing'], reverse=True)[:25]
+    longterm_picks = sorted(results, key=lambda x: x['score_longterm'], reverse=True)[:25]
     
     return {
         'daytrade': daytrade_picks,
@@ -1306,7 +1276,7 @@ app.layout = html.Div([
                               'background': 'linear-gradient(135deg, #00d4ff 0%, #ff00aa 100%)',
                               '-webkit-background-clip': 'text',
                               '-webkit-text-fill-color': 'transparent'}),
-                html.P("Stocks analyzed based on volatility, liquidity, and momentum", 
+                html.P("Top 80 liquid stocks analyzed for volatility, liquidity, and momentum", 
                        className="text-muted small mb-3"),
                 dbc.Button(
                     "🔄 Scan Market",
@@ -1327,7 +1297,7 @@ app.layout = html.Div([
                     # Day Trade Picks
                     dbc.Col([
                         html.Div([
-                            html.H5("⚡ Day Trade (50)", className="mb-2", 
+                            html.H5("⚡ Day Trade", className="mb-2", 
                                    style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
                             html.P("High volatility, liquid stocks for intraday moves", 
                                    className="text-muted small mb-2"),
@@ -1342,7 +1312,7 @@ app.layout = html.Div([
                     # Swing Trade Picks
                     dbc.Col([
                         html.Div([
-                            html.H5("🌊 Swing Trade (50)", className="mb-2",
+                            html.H5("🌊 Swing Trade", className="mb-2",
                                    style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
                             html.P("Trending stocks for multi-day holds (2-10 days)", 
                                    className="text-muted small mb-2"),
@@ -1357,7 +1327,7 @@ app.layout = html.Div([
                     # Long Term Picks
                     dbc.Col([
                         html.Div([
-                            html.H5("🏦 Long Term (50)", className="mb-2",
+                            html.H5("🏦 Long Term", className="mb-2",
                                    style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
                             html.P("Stable, lower volatility stocks for investing", 
                                    className="text-muted small mb-2"),
@@ -1742,9 +1712,9 @@ def update_stock_picks(n_clicks):
     
     if not n_clicks:
         return (
-            html.P("Click 'Scan Market' to analyze 150+ stocks", className="text-muted"),
-            html.P("Click 'Scan Market' to analyze 150+ stocks", className="text-muted"),
-            html.P("Click 'Scan Market' to analyze 150+ stocks", className="text-muted")
+            html.P("Click 'Scan Market' to find picks", className="text-muted"),
+            html.P("Click 'Scan Market' to find picks", className="text-muted"),
+            html.P("Click 'Scan Market' to find picks", className="text-muted")
         )
     
     try:

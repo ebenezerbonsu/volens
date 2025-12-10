@@ -1376,7 +1376,32 @@ app.layout = html.Div([
                                 className="bg-dark text-light border-secondary",
                                 style={'fontFamily': 'JetBrains Mono'}
                             )
-                        ], md=4),
+                        ], md=3),
+                        dbc.Col([
+                            dbc.Label("Investment Timeline", className="text-muted small"),
+                            dcc.Dropdown(
+                                id="investment-timeline",
+                                options=[
+                                    {'label': '1 Year', 'value': 1},
+                                    {'label': '2 Years', 'value': 2},
+                                    {'label': '3 Years', 'value': 3},
+                                    {'label': '4 Years', 'value': 4},
+                                    {'label': '5 Years', 'value': 5},
+                                    {'label': '6 Years', 'value': 6},
+                                    {'label': '7 Years', 'value': 7},
+                                    {'label': '8 Years', 'value': 8},
+                                    {'label': '9 Years', 'value': 9},
+                                    {'label': '10 Years', 'value': 10},
+                                ],
+                                value=2,
+                                clearable=False,
+                                style={
+                                    'backgroundColor': '#1a1a2e',
+                                    'fontFamily': 'JetBrains Mono',
+                                },
+                                className="dash-dropdown-dark"
+                            )
+                        ], md=2),
                         dbc.Col([
                             dbc.Label(" ", className="small"),
                             dbc.Button(
@@ -1386,7 +1411,7 @@ app.layout = html.Div([
                                 className="w-100",
                                 style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
                             )
-                        ], md=4, className="d-flex align-items-end")
+                        ], md=3, className="d-flex align-items-end")
                     ])
                 ], className="input-group mb-4")
             ], width=12)
@@ -1715,10 +1740,11 @@ def update_stock_picks(n_clicks):
     Output("portfolio-results", "children"),
     [Input("build-portfolio-btn", "n_clicks")],
     [State("investment-amount", "value"),
-     State("target-amount", "value")],
+     State("target-amount", "value"),
+     State("investment-timeline", "value")],
     prevent_initial_call=True
 )
-def update_portfolio(n_clicks, investment, target):
+def update_portfolio(n_clicks, investment, target, timeline):
     """Build and display investment portfolio recommendations"""
     if not n_clicks:
         return html.P("Enter your investment details and click 'Build Portfolio'", className="text-muted")
@@ -1726,10 +1752,11 @@ def update_portfolio(n_clicks, investment, target):
     try:
         investment = float(investment) if investment else 50000
         target = float(target) if target else 100000
+        timeline = int(timeline) if timeline else 2
         target_return = (target / investment) - 1
         
         # Build portfolios
-        result = build_investment_portfolio(investment, target_return)
+        result = build_investment_portfolio(investment, target_return, timeline)
         
         if not result:
             return html.P("Could not analyze stocks. Please try again.", className="text-danger")
@@ -1829,7 +1856,7 @@ def update_portfolio(n_clicks, investment, target):
                 ], md=2),
                 dbc.Col([
                     html.Div([
-                        html.Div("2 Years", className="metric-value", 
+                        html.Div(f"{timeline} {'Year' if timeline == 1 else 'Years'}", className="metric-value", 
                                 style={'color': '#ffd93d', 'fontSize': '1.5rem'}),
                         html.Div("Time Horizon", className="metric-label")
                     ], className="text-center")

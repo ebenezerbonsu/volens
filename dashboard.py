@@ -97,14 +97,17 @@ def analyze_stock_quick(ticker: str) -> dict:
         engine = VolatilityEngine(ticker, period='6mo')
         engine.fetch_data()
         
-        if len(engine.data) < 30:
+        if engine.data is None or len(engine.data) < 30:
             return None
             
         vol_df = engine.calculate_all_volatilities(window=21)
         
+        if vol_df is None or len(vol_df) < 20:
+            return None
+        
         current_vol = vol_df['Yang_Zhang'].iloc[-1]
         avg_vol = vol_df['Yang_Zhang'].mean()
-        vol_trend = (current_vol - avg_vol) / avg_vol  # Is vol rising or falling?
+        vol_trend = (current_vol - avg_vol) / avg_vol if avg_vol > 0 else 0  # Is vol rising or falling?
         
         # Get price data
         current_price = vol_df['Close'].iloc[-1]
@@ -118,38 +121,72 @@ def analyze_stock_quick(ticker: str) -> dict:
         
         return {
             'ticker': ticker,
-            'price': current_price,
-            'volatility': current_vol,
-            'avg_volatility': avg_vol,
-            'vol_trend': vol_trend,
+            'price': float(current_price),
+            'volatility': float(current_vol),
+            'avg_volatility': float(avg_vol),
+            'vol_trend': float(vol_trend),
             'regime': regime,
-            'price_change_5d': price_change_5d,
-            'price_change_20d': price_change_20d,
-            'dollar_volume': avg_dollar_volume,
+            'price_change_5d': float(price_change_5d),
+            'price_change_20d': float(price_change_20d),
+            'dollar_volume': float(avg_dollar_volume),
             'score_daytrade': 0,
             'score_swing': 0,
             'score_longterm': 0
         }
-    except Exception as e:
+    except Exception:
         return None
 
 
 def screen_stocks() -> dict:
     """Screen stocks and categorize for different trading styles"""
-    results = []
+    import sys
     
-    # Use ThreadPoolExecutor for parallel analysis (10 workers for faster scanning)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_ticker = {executor.submit(analyze_stock_quick, ticker): ticker 
-                          for ticker in STOCK_UNIVERSE}
-        
-        for future in concurrent.futures.as_completed(future_to_ticker):
-            result = future.result()
-            if result:
-                results.append(result)
+    def log(msg):
+        print(f"[SCREEN] {msg}")
+        sys.stdout.flush()
+    
+    results = []
+    failed = 0
+    total = len(STOCK_UNIVERSE)
+    
+    log(f"Starting to screen {total} stocks...")
+    
+    # Use ThreadPoolExecutor for parallel analysis (5 workers for stability)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_ticker = {executor.submit(analyze_stock_quick, ticker): ticker 
+                              for ticker in STOCK_UNIVERSE}
+            
+            completed = 0
+            for future in concurrent.futures.as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                completed += 1
+                try:
+                    result = future.result(timeout=15)  # 15 second timeout per stock
+                    if result:
+                        results.append(result)
+                    else:
+                        failed += 1
+                except concurrent.futures.TimeoutError:
+                    failed += 1
+                    log(f"Timeout analyzing {ticker}")
+                except Exception as e:
+                    failed += 1
+                    # Only log every 10th error to avoid spam
+                    if failed % 10 == 0:
+                        log(f"Error analyzing {ticker}: {str(e)}")
+                
+                # Log progress every 25 stocks
+                if completed % 25 == 0:
+                    log(f"Progress: {completed}/{total} stocks analyzed, {len(results)} successful, {failed} failed")
+    except Exception as e:
+        log(f"ThreadPool error: {str(e)}")
+    
+    log(f"Screening complete: {len(results)} successful out of {total} ({failed} failed)")
     
     if not results:
-        return {'daytrade': [], 'swing': [], 'longterm': []}
+        log("WARNING: No stocks were successfully analyzed!")
+        return {'daytrade': [], 'swing': [], 'longterm': [], 'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M')}
     
     # Score stocks for each category
     for stock in results:
@@ -1694,17 +1731,47 @@ def create_stock_card(stock: dict, style: str) -> html.Div:
 )
 def update_stock_picks(n_clicks):
     """Scan market and update stock picks"""
+    import traceback
+    import sys
+    
+    def log(msg):
+        print(f"[SCAN] {msg}")
+        sys.stdout.flush()
+    
+    log(f"Scan button clicked, n_clicks={n_clicks}")
+    
     if not n_clicks:
-        return [html.P("Click 'Scan Market' to analyze 150+ stocks", className="text-muted")] * 3
+        return (
+            html.P("Click 'Scan Market' to analyze 150+ stocks", className="text-muted"),
+            html.P("Click 'Scan Market' to analyze 150+ stocks", className="text-muted"),
+            html.P("Click 'Scan Market' to analyze 150+ stocks", className="text-muted")
+        )
     
     try:
+        log("Starting stock screening...")
+        
         # Screen stocks
         picks = screen_stocks()
         
+        log(f"Screening complete. Found: daytrade={len(picks.get('daytrade', []))}, swing={len(picks.get('swing', []))}, longterm={len(picks.get('longterm', []))}")
+        
+        if not picks or (not picks.get('daytrade') and not picks.get('swing') and not picks.get('longterm')):
+            no_data_msg = html.Div([
+                html.P("⚠️ No stocks found. This may be due to:", className="text-warning"),
+                html.Ul([
+                    html.Li("Market data temporarily unavailable"),
+                    html.Li("Network connectivity issues"),
+                    html.Li("Try again in a few moments")
+                ], className="text-muted small")
+            ])
+            return no_data_msg, no_data_msg, no_data_msg
+        
         # Create cards for each category
-        daytrade_cards = [create_stock_card(s, 'daytrade') for s in picks['daytrade']]
-        swing_cards = [create_stock_card(s, 'swing') for s in picks['swing']]
-        longterm_cards = [create_stock_card(s, 'longterm') for s in picks['longterm']]
+        daytrade_cards = [create_stock_card(s, 'daytrade') for s in picks.get('daytrade', [])]
+        swing_cards = [create_stock_card(s, 'swing') for s in picks.get('swing', [])]
+        longterm_cards = [create_stock_card(s, 'longterm') for s in picks.get('longterm', [])]
+        
+        log(f"Created cards: daytrade={len(daytrade_cards)}, swing={len(swing_cards)}, longterm={len(longterm_cards)}")
         
         # Add count and timestamp header
         def make_header(count, updated):
@@ -1721,14 +1788,27 @@ def update_stock_picks(n_clicks):
                 })
             ], style={'marginBottom': '10px'})
         
-        return (
-            html.Div([make_header(len(picks['daytrade']), picks['last_updated'])] + daytrade_cards) if daytrade_cards else html.P("No picks found", className="text-muted"),
-            html.Div([make_header(len(picks['swing']), picks['last_updated'])] + swing_cards) if swing_cards else html.P("No picks found", className="text-muted"),
-            html.Div([make_header(len(picks['longterm']), picks['last_updated'])] + longterm_cards) if longterm_cards else html.P("No picks found", className="text-muted")
-        )
+        last_updated = picks.get('last_updated', datetime.now().strftime('%Y-%m-%d %H:%M'))
+        
+        daytrade_content = html.Div([make_header(len(daytrade_cards), last_updated)] + daytrade_cards) if daytrade_cards else html.P("No day trade picks found", className="text-muted")
+        swing_content = html.Div([make_header(len(swing_cards), last_updated)] + swing_cards) if swing_cards else html.P("No swing trade picks found", className="text-muted")
+        longterm_content = html.Div([make_header(len(longterm_cards), last_updated)] + longterm_cards) if longterm_cards else html.P("No long-term picks found", className="text-muted")
+        
+        log("Returning results to UI")
+        return daytrade_content, swing_content, longterm_content
         
     except Exception as e:
-        error_msg = html.P(f"Error scanning: {str(e)}", className="text-danger")
+        tb = traceback.format_exc()
+        log(f"Error during scan: {str(e)}")
+        log(f"Traceback: {tb}")
+        
+        error_msg = html.Div([
+            html.P(f"❌ Error scanning market: {str(e)}", className="text-danger"),
+            html.Details([
+                html.Summary("Technical details", className="text-muted small"),
+                html.Pre(tb, className="text-muted small", style={'fontSize': '0.7rem', 'maxHeight': '150px', 'overflow': 'auto'})
+            ])
+        ])
         return error_msg, error_msg, error_msg
 
 

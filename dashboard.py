@@ -12,12 +12,149 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import yfinance as yf
 
 from volatility_engine import VolatilityEngine, get_volatility_interpretation
 from prediction_models import VolatilityPredictor
 import concurrent.futures
 import warnings
 warnings.filterwarnings('ignore')
+
+
+# ============================================
+# NEWS FETCHING FUNCTIONS
+# ============================================
+
+def fetch_stock_news(tickers: list = None, max_news: int = 30) -> list:
+    """
+    Fetch latest stock news from multiple tickers.
+    Returns list of news items sorted by publish time.
+    """
+    import sys
+    
+    def log(msg):
+        print(f"[NEWS] {msg}")
+        sys.stdout.flush()
+    
+    if tickers is None:
+        # Default to major market movers and popular stocks
+        tickers = [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA',
+            'JPM', 'GS', 'BAC', 'AMD', 'INTC', 'AVGO', 
+            'JNJ', 'UNH', 'PFE', 'LLY', 'MRNA',
+            'XOM', 'CVX', 'BA', 'CAT', 'DIS', 'NFLX',
+            'SPY', 'QQQ',  # ETFs for broad market news
+        ]
+    
+    all_news = []
+    seen_titles = set()  # Avoid duplicates
+    
+    log(f"Fetching news from {len(tickers)} tickers...")
+    
+    for ticker in tickers[:20]:  # Limit to prevent timeout
+        try:
+            stock = yf.Ticker(ticker)
+            news = stock.news
+            
+            if news:
+                for item in news[:5]:  # Top 5 news per ticker
+                    title = item.get('title', '')
+                    
+                    # Skip if we've seen this title (dedupe)
+                    if title in seen_titles:
+                        continue
+                    seen_titles.add(title)
+                    
+                    # Parse the news item
+                    news_item = {
+                        'title': title,
+                        'publisher': item.get('publisher', 'Unknown'),
+                        'link': item.get('link', '#'),
+                        'published': item.get('providerPublishTime', 0),
+                        'ticker': ticker,
+                        'type': item.get('type', 'STORY'),
+                        'thumbnail': item.get('thumbnail', {}).get('resolutions', [{}])[0].get('url', '') if item.get('thumbnail') else '',
+                        'related_tickers': item.get('relatedTickers', [ticker])
+                    }
+                    
+                    # Categorize news based on keywords
+                    news_item['category'] = categorize_news(title)
+                    
+                    all_news.append(news_item)
+                    
+        except Exception as e:
+            log(f"Error fetching news for {ticker}: {e}")
+            continue
+    
+    # Sort by publish time (newest first)
+    all_news.sort(key=lambda x: x['published'], reverse=True)
+    
+    log(f"Found {len(all_news)} unique news items")
+    
+    return all_news[:max_news]
+
+
+def categorize_news(title: str) -> str:
+    """Categorize news based on title keywords"""
+    title_lower = title.lower()
+    
+    # Mergers & Acquisitions
+    if any(word in title_lower for word in ['merger', 'acquire', 'acquisition', 'buyout', 'takeover', 'deal', 'bid']):
+        return '🤝 M&A'
+    
+    # IPO & Listings
+    if any(word in title_lower for word in ['ipo', 'public offering', 'listing', 'debut', 'goes public']):
+        return '🎉 IPO'
+    
+    # Government & Regulatory
+    if any(word in title_lower for word in ['fda', 'sec', 'federal', 'regulation', 'approval', 'approved', 'antitrust', 'investigation', 'lawsuit', 'congress', 'government', 'ban', 'fine', 'penalty']):
+        return '🏛️ Regulatory'
+    
+    # Earnings & Financials
+    if any(word in title_lower for word in ['earnings', 'revenue', 'profit', 'loss', 'quarter', 'q1', 'q2', 'q3', 'q4', 'beat', 'miss', 'guidance', 'forecast']):
+        return '📊 Earnings'
+    
+    # Analyst & Ratings
+    if any(word in title_lower for word in ['upgrade', 'downgrade', 'rating', 'analyst', 'price target', 'buy rating', 'sell rating', 'outperform', 'underperform']):
+        return '📈 Analyst'
+    
+    # Leadership & Management
+    if any(word in title_lower for word in ['ceo', 'cfo', 'executive', 'resign', 'appoint', 'hire', 'fire', 'layoff', 'job cut', 'workforce']):
+        return '👔 Leadership'
+    
+    # Products & Innovation
+    if any(word in title_lower for word in ['launch', 'product', 'release', 'unveil', 'announce', 'innovation', 'patent', 'breakthrough', 'ai', 'technology']):
+        return '🚀 Product'
+    
+    # Market Movement
+    if any(word in title_lower for word in ['surge', 'plunge', 'soar', 'crash', 'rally', 'drop', 'spike', 'jump', 'fall', 'rise', 'gain', 'lose']):
+        return '📉 Market'
+    
+    # Dividends & Buybacks
+    if any(word in title_lower for word in ['dividend', 'buyback', 'repurchase', 'payout', 'shareholder']):
+        return '💰 Dividend'
+    
+    # Default
+    return '📰 News'
+
+
+def get_time_ago(timestamp: int) -> str:
+    """Convert Unix timestamp to human-readable time ago"""
+    if not timestamp:
+        return "Recently"
+    
+    now = datetime.now()
+    published = datetime.fromtimestamp(timestamp)
+    diff = now - published
+    
+    if diff.days > 0:
+        return f"{diff.days}d ago"
+    elif diff.seconds > 3600:
+        return f"{diff.seconds // 3600}h ago"
+    elif diff.seconds > 60:
+        return f"{diff.seconds // 60}m ago"
+    else:
+        return "Just now"
 
 # Optimized stock universe - Top 80 most liquid stocks for faster scanning
 STOCK_UNIVERSE = [
@@ -596,6 +733,14 @@ app.index_string = '''
                 border-radius: 12px;
                 padding: 1rem;
                 border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            .news-card:hover {
+                background: rgba(255, 255, 255, 0.05) !important;
+                transform: translateX(5px);
+            }
+            .news-title-link:hover {
+                color: var(--accent-cyan) !important;
+                text-decoration: underline !important;
             }
         </style>
     </head>
@@ -1434,6 +1579,69 @@ app.layout = html.Div([
             ]
         ),
         
+        # Live Stock News Section
+        html.Hr(className="border-secondary my-4"),
+        dbc.Row([
+            dbc.Col([
+                html.H3("📰 Live Market News", className="mb-2", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #ffd93d 0%, #ff6b35 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("Real-time news on mergers, acquisitions, regulatory approvals, and market moves", 
+                       className="text-muted small mb-3"),
+            ], width=9),
+            dbc.Col([
+                dbc.Button(
+                    "🔄 Refresh News",
+                    id="refresh-news-btn",
+                    color="warning",
+                    className="mb-3",
+                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                ),
+            ], width=3, className="text-end")
+        ]),
+        
+        # News category filters
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.Span("Filter: ", className="text-muted me-2", style={'fontSize': '0.85rem'}),
+                    dbc.ButtonGroup([
+                        dbc.Button("All", id="filter-all", color="secondary", size="sm", outline=True, className="me-1"),
+                        dbc.Button("🤝 M&A", id="filter-ma", color="secondary", size="sm", outline=True, className="me-1"),
+                        dbc.Button("🏛️ Regulatory", id="filter-reg", color="secondary", size="sm", outline=True, className="me-1"),
+                        dbc.Button("📊 Earnings", id="filter-earn", color="secondary", size="sm", outline=True, className="me-1"),
+                        dbc.Button("📈 Analyst", id="filter-analyst", color="secondary", size="sm", outline=True, className="me-1"),
+                        dbc.Button("🚀 Product", id="filter-prod", color="secondary", size="sm", outline=True),
+                    ], size="sm")
+                ], className="mb-3")
+            ], width=12)
+        ]),
+        
+        dcc.Loading(
+            id="loading-news",
+            type="circle",
+            color="#ffd93d",
+            children=[
+                html.Div(id="news-container", style={
+                    'maxHeight': '800px',
+                    'overflowY': 'auto',
+                    'paddingRight': '10px'
+                })
+            ]
+        ),
+        
+        # Store for news data (for filtering)
+        dcc.Store(id='news-store'),
+        
+        # Auto-refresh interval (every 5 minutes)
+        dcc.Interval(
+            id='news-interval',
+            interval=5*60*1000,  # 5 minutes in milliseconds
+            n_intervals=0
+        ),
+        
         # Disclaimer
         dbc.Row([
             dbc.Col([
@@ -1927,6 +2135,220 @@ def update_portfolio(n_clicks, investment, target, timeline):
             html.P(f"Error building portfolio: {str(e)}", className="text-danger"),
             html.Pre(traceback.format_exc(), className="text-muted small")
         ])
+
+
+def create_news_card(news_item: dict) -> html.Div:
+    """Create a styled news card"""
+    # Category colors
+    category_colors = {
+        '🤝 M&A': '#ff00aa',
+        '🎉 IPO': '#00ff88',
+        '🏛️ Regulatory': '#ffd93d',
+        '📊 Earnings': '#00d4ff',
+        '📈 Analyst': '#ff6b35',
+        '👔 Leadership': '#9966ff',
+        '🚀 Product': '#00ff88',
+        '📉 Market': '#ff6b35',
+        '💰 Dividend': '#00d4ff',
+        '📰 News': '#8888aa'
+    }
+    
+    category = news_item.get('category', '📰 News')
+    color = category_colors.get(category, '#8888aa')
+    time_ago = get_time_ago(news_item.get('published', 0))
+    
+    # Related tickers
+    related = news_item.get('related_tickers', [])
+    ticker_badges = [
+        html.Span(t, style={
+            'background': 'rgba(0, 212, 255, 0.2)',
+            'color': '#00d4ff',
+            'padding': '2px 6px',
+            'borderRadius': '4px',
+            'fontSize': '0.7rem',
+            'marginRight': '4px',
+            'fontFamily': 'JetBrains Mono'
+        }) for t in related[:5]  # Limit to 5 tickers
+    ]
+    
+    return html.Div([
+        # Header row: Category + Time
+        html.Div([
+            html.Span(category, style={
+                'background': f'{color}22',
+                'color': color,
+                'padding': '3px 10px',
+                'borderRadius': '12px',
+                'fontSize': '0.75rem',
+                'fontWeight': '600'
+            }),
+            html.Span(time_ago, style={
+                'color': '#8888aa',
+                'fontSize': '0.75rem',
+                'marginLeft': 'auto'
+            })
+        ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '8px'}),
+        
+        # Title (link)
+        html.A(
+            news_item.get('title', 'Untitled'),
+            href=news_item.get('link', '#'),
+            target='_blank',
+            style={
+                'color': '#ffffff',
+                'textDecoration': 'none',
+                'fontWeight': '500',
+                'fontSize': '0.95rem',
+                'lineHeight': '1.4',
+                'display': 'block',
+                'marginBottom': '8px'
+            },
+            className='news-title-link'
+        ),
+        
+        # Footer: Publisher + Related tickers
+        html.Div([
+            html.Span(news_item.get('publisher', 'Unknown'), style={
+                'color': '#666688',
+                'fontSize': '0.75rem',
+                'marginRight': '10px'
+            }),
+            html.Div(ticker_badges, style={'display': 'inline-flex', 'flexWrap': 'wrap', 'gap': '2px'})
+        ], style={'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap'})
+        
+    ], style={
+        'background': 'rgba(255, 255, 255, 0.02)',
+        'borderLeft': f'3px solid {color}',
+        'padding': '12px 15px',
+        'marginBottom': '10px',
+        'borderRadius': '0 10px 10px 0',
+        'transition': 'all 0.2s ease'
+    }, className='news-card')
+
+
+@app.callback(
+    [Output("news-container", "children"),
+     Output("news-store", "data")],
+    [Input("refresh-news-btn", "n_clicks"),
+     Input("news-interval", "n_intervals")],
+    prevent_initial_call=False
+)
+def update_news(n_clicks, n_intervals):
+    """Fetch and display latest news"""
+    import sys
+    
+    def log(msg):
+        print(f"[NEWS-CB] {msg}")
+        sys.stdout.flush()
+    
+    log(f"Fetching news (clicks={n_clicks}, intervals={n_intervals})")
+    
+    try:
+        # Fetch news
+        news_items = fetch_stock_news(max_news=30)
+        
+        if not news_items:
+            empty_msg = html.Div([
+                html.P("📭 No news available at the moment.", className="text-muted"),
+                html.P("Click 'Refresh News' to try again.", className="text-muted small")
+            ], style={'padding': '20px', 'textAlign': 'center'})
+            return empty_msg, []
+        
+        # Create news cards
+        news_cards = [create_news_card(item) for item in news_items]
+        
+        # Add header with count and timestamp
+        header = html.Div([
+            html.Span(f"📰 {len(news_items)} Latest Headlines", style={
+                'color': '#ffd93d',
+                'fontFamily': 'JetBrains Mono',
+                'fontSize': '0.9rem',
+                'fontWeight': '600'
+            }),
+            html.Span(f" • Updated {datetime.now().strftime('%H:%M:%S')}", style={
+                'color': '#8888aa',
+                'fontSize': '0.75rem',
+                'marginLeft': '10px'
+            })
+        ], style={'marginBottom': '15px'})
+        
+        log(f"Displaying {len(news_items)} news items")
+        
+        return html.Div([header] + news_cards), news_items
+        
+    except Exception as e:
+        import traceback
+        log(f"Error fetching news: {e}")
+        error_msg = html.Div([
+            html.P(f"❌ Error loading news: {str(e)}", className="text-danger"),
+            html.P("Try refreshing in a moment.", className="text-muted small")
+        ])
+        return error_msg, []
+
+
+@app.callback(
+    Output("news-container", "children", allow_duplicate=True),
+    [Input("filter-all", "n_clicks"),
+     Input("filter-ma", "n_clicks"),
+     Input("filter-reg", "n_clicks"),
+     Input("filter-earn", "n_clicks"),
+     Input("filter-analyst", "n_clicks"),
+     Input("filter-prod", "n_clicks")],
+    [State("news-store", "data")],
+    prevent_initial_call=True
+)
+def filter_news(all_clicks, ma_clicks, reg_clicks, earn_clicks, analyst_clicks, prod_clicks, news_data):
+    """Filter news by category"""
+    from dash import ctx
+    
+    if not news_data:
+        return html.P("No news to filter. Click 'Refresh News' first.", className="text-muted")
+    
+    # Determine which filter was clicked
+    triggered = ctx.triggered_id
+    
+    category_map = {
+        'filter-all': None,  # Show all
+        'filter-ma': '🤝 M&A',
+        'filter-reg': '🏛️ Regulatory',
+        'filter-earn': '📊 Earnings',
+        'filter-analyst': '📈 Analyst',
+        'filter-prod': '🚀 Product'
+    }
+    
+    filter_category = category_map.get(triggered)
+    
+    # Filter news
+    if filter_category is None:
+        filtered = news_data
+    else:
+        filtered = [item for item in news_data if item.get('category') == filter_category]
+    
+    if not filtered:
+        return html.Div([
+            html.P(f"No {filter_category or 'news'} found.", className="text-muted"),
+            html.P("Try another category or refresh news.", className="text-muted small")
+        ])
+    
+    # Create cards
+    news_cards = [create_news_card(item) for item in filtered]
+    
+    # Header
+    header = html.Div([
+        html.Span(f"📰 {len(filtered)} Headlines", style={
+            'color': '#ffd93d',
+            'fontFamily': 'JetBrains Mono',
+            'fontSize': '0.9rem',
+            'fontWeight': '600'
+        }),
+        html.Span(f" • Filter: {filter_category or 'All'}", style={
+            'color': '#8888aa',
+            'fontSize': '0.75rem',
+            'marginLeft': '10px'
+        })
+    ], style={'marginBottom': '15px'})
+    
+    return html.Div([header] + news_cards)
 
 
 # Run the app

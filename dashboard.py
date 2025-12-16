@@ -89,23 +89,63 @@ def fetch_stock_news(tickers: list = None, max_news: int = 50) -> list:
             
             if news:
                 for item in news[:5]:  # Top 5 news per ticker
-                    title = item.get('title', '')
+                    # Handle new yfinance structure where data is nested under 'content'
+                    content = item.get('content', item)  # Fallback to item if no content key
                     
-                    # Skip if we've seen this title (dedupe)
-                    if title in seen_titles:
+                    title = content.get('title', '')
+                    
+                    # Skip if empty title or we've seen this title (dedupe)
+                    if not title or title in seen_titles:
                         continue
                     seen_titles.add(title)
+                    
+                    # Parse publisher - handle nested structure
+                    publisher = 'Unknown'
+                    if 'provider' in content:
+                        publisher = content['provider'].get('displayName', 'Unknown')
+                    elif 'publisher' in content:
+                        publisher = content['publisher']
+                    
+                    # Parse link - handle nested structure
+                    link = '#'
+                    if 'canonicalUrl' in content:
+                        link = content['canonicalUrl'].get('url', '#')
+                    elif 'clickThroughUrl' in content:
+                        link = content['clickThroughUrl'].get('url', '#')
+                    elif 'link' in content:
+                        link = content['link']
+                    
+                    # Parse publish time - handle both formats
+                    published = 0
+                    if 'pubDate' in content:
+                        # Convert ISO format to timestamp
+                        try:
+                            from datetime import datetime
+                            pub_date = content['pubDate'].replace('Z', '+00:00')
+                            dt = datetime.fromisoformat(pub_date)
+                            published = int(dt.timestamp())
+                        except:
+                            published = 0
+                    elif 'providerPublishTime' in content:
+                        published = content['providerPublishTime']
+                    
+                    # Parse thumbnail
+                    thumbnail = ''
+                    if 'thumbnail' in content and content['thumbnail']:
+                        resolutions = content['thumbnail'].get('resolutions', [])
+                        if resolutions:
+                            thumbnail = resolutions[0].get('url', '')
                     
                     # Parse the news item
                     news_item = {
                         'title': title,
-                        'publisher': item.get('publisher', 'Unknown'),
-                        'link': item.get('link', '#'),
-                        'published': item.get('providerPublishTime', 0),
+                        'publisher': publisher,
+                        'link': link,
+                        'published': published,
                         'ticker': ticker,
-                        'type': item.get('type', 'STORY'),
-                        'thumbnail': item.get('thumbnail', {}).get('resolutions', [{}])[0].get('url', '') if item.get('thumbnail') else '',
-                        'related_tickers': item.get('relatedTickers', [ticker])
+                        'type': content.get('contentType', 'STORY'),
+                        'thumbnail': thumbnail,
+                        'related_tickers': [ticker]  # yfinance doesn't provide related tickers in new format
                     }
                     
                     # Categorize news based on keywords

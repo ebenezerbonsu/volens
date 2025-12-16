@@ -25,9 +25,9 @@ warnings.filterwarnings('ignore')
 # NEWS FETCHING FUNCTIONS
 # ============================================
 
-def fetch_stock_news(tickers: list = None, max_news: int = 30) -> list:
+def fetch_stock_news(tickers: list = None, max_news: int = 50) -> list:
     """
-    Fetch latest stock news from multiple tickers.
+    Fetch latest stock news from ALL major stocks across sectors.
     Returns list of news items sorted by publish time.
     """
     import sys
@@ -37,13 +37,44 @@ def fetch_stock_news(tickers: list = None, max_news: int = 30) -> list:
         sys.stdout.flush()
     
     if tickers is None:
-        # Default to major market movers and popular stocks
+        # Comprehensive list of stocks across ALL sectors for broad market news
         tickers = [
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA',
-            'JPM', 'GS', 'BAC', 'AMD', 'INTC', 'AVGO', 
-            'JNJ', 'UNH', 'PFE', 'LLY', 'MRNA',
-            'XOM', 'CVX', 'BA', 'CAT', 'DIS', 'NFLX',
-            'SPY', 'QQQ',  # ETFs for broad market news
+            # Tech Giants
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'ORCL', 'CRM', 'ADBE',
+            # Semiconductors
+            'AMD', 'INTC', 'AVGO', 'QCOM', 'MU', 'AMAT', 'ARM', 'SMCI',
+            # Finance & Banks
+            'JPM', 'GS', 'BAC', 'MS', 'WFC', 'C', 'BLK', 'SCHW',
+            # Fintech & Payments
+            'V', 'MA', 'PYPL', 'SQ', 'COIN', 'SOFI',
+            # Healthcare & Pharma
+            'JNJ', 'UNH', 'PFE', 'LLY', 'ABBV', 'MRK', 'MRNA', 'BMY', 'GILD',
+            # Biotech
+            'AMGN', 'BIIB', 'REGN', 'VRTX', 'ISRG',
+            # Energy
+            'XOM', 'CVX', 'COP', 'SLB', 'OXY', 'EOG',
+            # Clean Energy & EV
+            'ENPH', 'FSLR', 'RIVN', 'LCID', 'NIO',
+            # Aerospace & Defense
+            'BA', 'RTX', 'LMT', 'NOC', 'GD',
+            # Industrial
+            'CAT', 'DE', 'HON', 'GE', 'MMM', 'UPS', 'FDX',
+            # Consumer & Retail
+            'WMT', 'COST', 'HD', 'TGT', 'LOW', 'AMZN',
+            # Food & Beverage
+            'KO', 'PEP', 'MCD', 'SBUX', 'NKE',
+            # Entertainment & Media
+            'DIS', 'NFLX', 'WBD', 'PARA', 'CMCSA',
+            # Social Media & Internet
+            'SNAP', 'PINS', 'UBER', 'LYFT', 'ABNB', 'DASH',
+            # Telecom
+            'T', 'VZ', 'TMUS',
+            # Real Estate
+            'AMT', 'PLD', 'EQIX',
+            # Crypto-related
+            'MARA', 'RIOT', 'MSTR',
+            # ETFs for broad market news
+            'SPY', 'QQQ', 'DIA', 'IWM', 'VTI',
         ]
     
     all_news = []
@@ -51,7 +82,7 @@ def fetch_stock_news(tickers: list = None, max_news: int = 30) -> list:
     
     log(f"Fetching news from {len(tickers)} tickers...")
     
-    for ticker in tickers[:20]:  # Limit to prevent timeout
+    for ticker in tickers[:40]:  # Scan 40 stocks for comprehensive coverage
         try:
             stock = yf.Ticker(ticker)
             news = stock.news
@@ -1588,7 +1619,7 @@ app.layout = html.Div([
                               'background': 'linear-gradient(135deg, #ffd93d 0%, #ff6b35 100%)',
                               '-webkit-background-clip': 'text',
                               '-webkit-text-fill-color': 'transparent'}),
-                html.P("Real-time news on mergers, acquisitions, regulatory approvals, and market moves", 
+                html.P("Real-time news from 80+ stocks across all sectors: mergers, acquisitions, FDA approvals, earnings & more", 
                        className="text-muted small mb-3"),
             ], width=9),
             dbc.Col([
@@ -1613,9 +1644,11 @@ app.layout = html.Div([
                         dbc.Button("🏛️ Regulatory", id="filter-reg", color="secondary", size="sm", outline=True, className="me-1"),
                         dbc.Button("📊 Earnings", id="filter-earn", color="secondary", size="sm", outline=True, className="me-1"),
                         dbc.Button("📈 Analyst", id="filter-analyst", color="secondary", size="sm", outline=True, className="me-1"),
-                        dbc.Button("🚀 Product", id="filter-prod", color="secondary", size="sm", outline=True),
+                        dbc.Button("🚀 Product", id="filter-prod", color="secondary", size="sm", outline=True, className="me-1"),
+                        dbc.Button("📉 Market", id="filter-market", color="secondary", size="sm", outline=True, className="me-1"),
+                        dbc.Button("👔 Leadership", id="filter-leader", color="secondary", size="sm", outline=True),
                     ], size="sm")
-                ], className="mb-3")
+                ], className="mb-3", style={'overflowX': 'auto', 'whiteSpace': 'nowrap'})
             ], width=12)
         ]),
         
@@ -2293,11 +2326,13 @@ def update_news(n_clicks, n_intervals):
      Input("filter-reg", "n_clicks"),
      Input("filter-earn", "n_clicks"),
      Input("filter-analyst", "n_clicks"),
-     Input("filter-prod", "n_clicks")],
+     Input("filter-prod", "n_clicks"),
+     Input("filter-market", "n_clicks"),
+     Input("filter-leader", "n_clicks")],
     [State("news-store", "data")],
     prevent_initial_call=True
 )
-def filter_news(all_clicks, ma_clicks, reg_clicks, earn_clicks, analyst_clicks, prod_clicks, news_data):
+def filter_news(all_clicks, ma_clicks, reg_clicks, earn_clicks, analyst_clicks, prod_clicks, market_clicks, leader_clicks, news_data):
     """Filter news by category"""
     from dash import ctx
     
@@ -2313,7 +2348,9 @@ def filter_news(all_clicks, ma_clicks, reg_clicks, earn_clicks, analyst_clicks, 
         'filter-reg': '🏛️ Regulatory',
         'filter-earn': '📊 Earnings',
         'filter-analyst': '📈 Analyst',
-        'filter-prod': '🚀 Product'
+        'filter-prod': '🚀 Product',
+        'filter-market': '📉 Market',
+        'filter-leader': '👔 Leadership'
     }
     
     filter_category = category_map.get(triggered)

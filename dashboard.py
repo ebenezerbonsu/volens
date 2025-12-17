@@ -2254,6 +2254,9 @@ app.layout = html.Div([
             ]
         ),
         
+        # Store for recommendations data (for filtering without refetching)
+        dcc.Store(id='recommendations-store'),
+        
         # Auto-refresh interval for recommendations (every 10 minutes)
         dcc.Interval(
             id='recommendations-interval',
@@ -3238,115 +3241,139 @@ def create_recommendation_card(stock: dict) -> html.Div:
 
 
 @app.callback(
-    Output("recommendations-list", "children"),
+    Output("recommendations-store", "data"),
     [Input("refresh-recommendations-btn", "n_clicks"),
-     Input("recommendations-interval", "n_intervals"),
-     Input("price-range-filter", "value")],
+     Input("recommendations-interval", "n_intervals")],
     prevent_initial_call=False  # Auto-load on page open
 )
-def update_recommendations(n_clicks, n_intervals, price_range):
-    """Generate and display buy recommendations filtered by price range"""
+def fetch_recommendations(n_clicks, n_intervals):
+    """Fetch and store buy recommendations (separate from display)"""
     import sys
     
     def log(msg):
-        print(f"[RECO-CB] {msg}")
+        print(f"[RECO-FETCH] {msg}")
         sys.stdout.flush()
     
-    log(f"Loading recommendations (n_clicks={n_clicks}, price_range={price_range})")
+    log(f"Fetching recommendations (n_clicks={n_clicks})")
     
     try:
-        log("Generating buy recommendations...")
-        recommendations = generate_buy_recommendations(num_picks=20)  # Get more to filter
+        recommendations = generate_buy_recommendations(num_picks=30)  # Get plenty to filter
+        log(f"Fetched {len(recommendations)} recommendations")
         
-        # Apply price filter
-        if price_range and price_range != 'all':
-            if price_range == '500-1000':
-                recommendations = [r for r in recommendations if r['price'] >= 500]
-            elif price_range == '100-500':
-                recommendations = [r for r in recommendations if 100 <= r['price'] < 500]
-            elif price_range == '10-100':
-                recommendations = [r for r in recommendations if 10 <= r['price'] < 100]
-            elif price_range == '0-10':
-                recommendations = [r for r in recommendations if r['price'] < 10]
-        
-        # Limit to top 10 after filtering
-        recommendations = recommendations[:10]
-        
-        if not recommendations:
-            # Show helpful message based on filter
-            price_msg = {
-                'all': 'any price range',
-                '500-1000': '$500-$1000+',
-                '100-500': '$100-$500',
-                '10-100': '$10-$100',
-                '0-10': '$10 or below'
-            }.get(price_range, 'selected range')
-            
-            return html.Div([
-                html.P(f"📊 No strong buy signals found for stocks in {price_msg}.", className="text-muted"),
-                html.P("Try a different price range or check back later!", className="text-muted small")
-            ], style={'padding': '20px', 'textAlign': 'center'})
-        
-        log(f"Found {len(recommendations)} recommendations after filtering")
-        
-        # Price range label
-        price_label = {
-            'all': 'All Prices',
+        # Convert to serializable format and store
+        return {
+            'recommendations': recommendations,
+            'timestamp': datetime.now().strftime('%H:%M:%S')
+        }
+    except Exception as e:
+        log(f"Error fetching: {e}")
+        return {'recommendations': [], 'timestamp': datetime.now().strftime('%H:%M:%S')}
+
+
+@app.callback(
+    Output("recommendations-list", "children"),
+    [Input("recommendations-store", "data"),
+     Input("price-range-filter", "value")]
+)
+def display_recommendations(stored_data, price_range):
+    """Display recommendations filtered by price range (instant filtering from stored data)"""
+    import sys
+    
+    def log(msg):
+        print(f"[RECO-DISPLAY] {msg}")
+        sys.stdout.flush()
+    
+    if not stored_data or not stored_data.get('recommendations'):
+        return html.Div([
+            html.P("📊 Loading recommendations...", className="text-muted"),
+            html.P("Please wait while we analyze stocks.", className="text-muted small")
+        ], style={'padding': '20px', 'textAlign': 'center'})
+    
+    recommendations = stored_data['recommendations']
+    timestamp = stored_data.get('timestamp', '')
+    
+    log(f"Filtering {len(recommendations)} recommendations by price_range={price_range}")
+    
+    # Apply price filter
+    if price_range and price_range != 'all':
+        if price_range == '500-1000':
+            recommendations = [r for r in recommendations if r['price'] >= 500]
+        elif price_range == '100-500':
+            recommendations = [r for r in recommendations if 100 <= r['price'] < 500]
+        elif price_range == '10-100':
+            recommendations = [r for r in recommendations if 10 <= r['price'] < 100]
+        elif price_range == '0-10':
+            recommendations = [r for r in recommendations if r['price'] < 10]
+    
+    # Limit to top 10 after filtering
+    recommendations = recommendations[:10]
+    
+    log(f"After filtering: {len(recommendations)} recommendations")
+    
+    if not recommendations:
+        # Show helpful message based on filter
+        price_msg = {
+            'all': 'any price range',
             '500-1000': '$500-$1000+',
             '100-500': '$100-$500',
             '10-100': '$10-$100',
-            '0-10': '$10 or Below'
-        }.get(price_range, 'All Prices')
+            '0-10': '$10 or below'
+        }.get(price_range, 'selected range')
         
-        # Header
-        header = html.Div([
-            html.Div([
-                html.Span(f"🎯 Top {len(recommendations)} Buy Picks", style={
-                    'color': '#00ff88',
-                    'fontFamily': 'JetBrains Mono',
-                    'fontSize': '1rem',
-                    'fontWeight': '600'
-                }),
-                html.Span(f" • {price_label}", style={
-                    'color': '#ffd93d',
-                    'fontSize': '0.8rem',
-                    'marginLeft': '10px',
-                    'background': 'rgba(255, 217, 61, 0.1)',
-                    'padding': '2px 8px',
-                    'borderRadius': '8px'
-                }),
-                html.Span(f" • Updated {datetime.now().strftime('%H:%M:%S')}", style={
-                    'color': '#8888aa',
-                    'fontSize': '0.75rem',
-                    'marginLeft': '10px'
-                })
-            ]),
-            html.P("Based on momentum, technicals, volume & fundamentals analysis", 
-                   className="text-muted small mb-0 mt-1")
-        ], style={'marginBottom': '20px'})
-        
-        # Create cards
-        cards = [create_recommendation_card(rec) for rec in recommendations]
-        
-        # Split into columns for better layout
-        left_cards = cards[:5]
-        right_cards = cards[5:]
-        
-        content = dbc.Row([
-            dbc.Col(left_cards, md=6),
-            dbc.Col(right_cards, md=6)
-        ])
-        
-        return html.Div([header, content])
-        
-    except Exception as e:
-        import traceback
-        log(f"Error: {e}")
-        log(traceback.format_exc())
         return html.Div([
-            html.P(f"❌ Error generating recommendations: {str(e)}", className="text-danger"),
-            html.P("Try refreshing in a moment.", className="text-muted small")
-        ])
+            html.P(f"📊 No strong buy signals found for stocks in {price_msg}.", className="text-muted"),
+            html.P("Try a different price range or click 'Get Picks' to refresh!", className="text-muted small")
+        ], style={'padding': '20px', 'textAlign': 'center'})
+    
+    # Price range label
+    price_label = {
+        'all': 'All Prices',
+        '500-1000': '$500-$1000+',
+        '100-500': '$100-$500',
+        '10-100': '$10-$100',
+        '0-10': '$10 or Below'
+    }.get(price_range, 'All Prices')
+    
+    # Header
+    header = html.Div([
+        html.Div([
+            html.Span(f"🎯 Top {len(recommendations)} Buy Picks", style={
+                'color': '#00ff88',
+                'fontFamily': 'JetBrains Mono',
+                'fontSize': '1rem',
+                'fontWeight': '600'
+            }),
+            html.Span(f" • {price_label}", style={
+                'color': '#ffd93d',
+                'fontSize': '0.8rem',
+                'marginLeft': '10px',
+                'background': 'rgba(255, 217, 61, 0.1)',
+                'padding': '2px 8px',
+                'borderRadius': '8px'
+            }),
+            html.Span(f" • Updated {timestamp}", style={
+                'color': '#8888aa',
+                'fontSize': '0.75rem',
+                'marginLeft': '10px'
+            })
+        ]),
+        html.P("Based on momentum, technicals, volume & fundamentals analysis", 
+               className="text-muted small mb-0 mt-1")
+    ], style={'marginBottom': '20px'})
+    
+    # Create cards
+    cards = [create_recommendation_card(rec) for rec in recommendations]
+    
+    # Split into columns for better layout
+    left_cards = cards[:5]
+    right_cards = cards[5:]
+    
+    content = dbc.Row([
+        dbc.Col(left_cards, md=6),
+        dbc.Col(right_cards, md=6)
+    ])
+    
+    return html.Div([header, content])
 
 
 # Run the app

@@ -1749,522 +1749,490 @@ app.layout = html.Div([
             dbc.Col([
                 html.H1("VoLens", className="dashboard-title mt-4 mb-0"),
                 html.P("Stock Volatility Predictor • AI-Powered Market Analysis", 
-                       className="text-muted mb-4", 
+                       className="text-muted mb-2", 
                        style={'fontFamily': 'JetBrains Mono, monospace', 'fontSize': '0.9rem'})
             ], width=12)
         ]),
         
-        # Input Section
-        dbc.Row([
-            dbc.Col([
-                html.Div([
+        # Navigation Buttons (horizontal menu)
+        html.Div([
+            dbc.ButtonGroup([
+                dbc.Button("📊 Volatility", id="nav-volatility", color="info", outline=True, 
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                dbc.Button("🎯 Stock Picks", id="nav-picks", color="secondary", outline=True,
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                dbc.Button("💡 Buy Signals", id="nav-recommendations", color="secondary", outline=True,
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                dbc.Button("🔥 Movers", id="nav-movers", color="secondary", outline=True,
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                dbc.Button("📰 News", id="nav-news", color="secondary", outline=True,
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                dbc.Button("💰 Portfolio", id="nav-portfolio", color="secondary", outline=True,
+                          style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+            ], className="mb-4 mt-3")
+        ], style={'overflowX': 'auto', 'whiteSpace': 'nowrap'}),
+        
+        # ===== SECTION 1: VOLATILITY ANALYSIS =====
+        html.Div(id="section-volatility", children=[
+            # Input Section
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("Stock Ticker", className="text-muted small"),
+                                dbc.Input(
+                                    id="ticker-input",
+                                    type="text",
+                                    value="AAPL",
+                                    placeholder="Enter ticker (e.g., AAPL, TSLA)",
+                                    className="bg-dark text-light border-secondary",
+                                    style={'fontFamily': 'JetBrains Mono'}
+                                )
+                            ], md=4),
+                            dbc.Col([
+                                dbc.Label("Time Period", className="text-muted small"),
+                                dbc.Select(
+                                    id="period-select",
+                                    options=[
+                                        {"label": "1 Year", "value": "1y"},
+                                        {"label": "2 Years", "value": "2y"},
+                                        {"label": "5 Years", "value": "5y"},
+                                    ],
+                                    value="2y",
+                                    className="bg-dark text-light border-secondary"
+                                )
+                            ], md=3),
+                            dbc.Col([
+                                dbc.Label("Forecast Days", className="text-muted small"),
+                                dbc.Input(
+                                    id="forecast-days",
+                                    type="number",
+                                    value=30,
+                                    min=7,
+                                    max=90,
+                                    className="bg-dark text-light border-secondary",
+                                    style={'fontFamily': 'JetBrains Mono'}
+                                )
+                            ], md=2),
+                            dbc.Col([
+                                dbc.Label(" ", className="small"),
+                                dbc.Button(
+                                    "Analyze",
+                                    id="analyze-btn",
+                                    color="info",
+                                    className="w-100",
+                                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                                )
+                            ], md=3, className="d-flex align-items-end")
+                        ])
+                    ], className="input-group mb-4")
+                ], width=12)
+            ]),
+            
+            # Loading indicator
+            dcc.Loading(
+                id="loading",
+                type="circle",
+                color="#00d4ff",
+                children=[
+                    html.Div(id="metrics-container"),
                     dbc.Row([
                         dbc.Col([
-                            dbc.Label("Stock Ticker", className="text-muted small"),
-                            dbc.Input(
-                                id="ticker-input",
-                                type="text",
-                                value="AAPL",
-                                placeholder="Enter ticker (e.g., AAPL, TSLA)",
-                                className="bg-dark text-light border-secondary",
-                                style={'fontFamily': 'JetBrains Mono'}
-                            )
-                        ], md=4),
-                        dbc.Col([
-                            dbc.Label("Time Period", className="text-muted small"),
-                            dbc.Select(
-                                id="period-select",
-                                options=[
-                                    {"label": "1 Year", "value": "1y"},
-                                    {"label": "2 Years", "value": "2y"},
-                                    {"label": "5 Years", "value": "5y"},
-                                ],
-                                value="2y",
-                                className="bg-dark text-light border-secondary"
-                            )
-                        ], md=3),
-                        dbc.Col([
-                            dbc.Label("Forecast Days", className="text-muted small"),
-                            dbc.Input(
-                                id="forecast-days",
-                                type="number",
-                                value=30,
-                                min=7,
-                                max=90,
-                                className="bg-dark text-light border-secondary",
-                                style={'fontFamily': 'JetBrains Mono'}
-                            )
-                        ], md=2),
-                        dbc.Col([
-                            dbc.Label(" ", className="small"),
-                            dbc.Button(
-                                "Analyze",
-                                id="analyze-btn",
-                                color="info",
-                                className="w-100",
-                                style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                            )
-                        ], md=3, className="d-flex align-items-end")
-                    ])
-                ], className="input-group mb-4")
-            ], width=12)
-        ]),
-        
-        # Loading indicator
-        dcc.Loading(
-            id="loading",
-            type="circle",
-            color="#00d4ff",
-            children=[
-                # Metric Cards
-                html.Div(id="metrics-container"),
-                
-                # Charts Row 1
-                dbc.Row([
-                    dbc.Col([
-                        html.Div([
-                            dcc.Graph(id="price-volatility-chart", config={'displayModeBar': False})
-                        ], className="chart-container mb-4")
-                    ], width=12)
-                ]),
-                
-                # Charts Row 2 - Forecasts
-                dbc.Row([
-                    dbc.Col([
-                        html.Div([
-                            dcc.Graph(id="price-forecast-chart", config={'displayModeBar': False})
-                        ], className="chart-container mb-4")
-                    ], md=6),
-                    dbc.Col([
-                        html.Div([
-                            dcc.Graph(id="forecast-chart", config={'displayModeBar': False})
-                        ], className="chart-container mb-4")
-                    ], md=6)
-                ]),
-                
-                # Charts Row 3 - Distribution & Range
-                dbc.Row([
-                    dbc.Col([
-                        html.Div([
-                            dcc.Graph(id="distribution-chart", config={'displayModeBar': False})
-                        ], className="chart-container mb-4")
-                    ], md=4),
-                    dbc.Col([
-                        html.Div([
-                            dcc.Graph(id="range-chart", config={'displayModeBar': False})
-                        ], className="chart-container mb-4")
-                    ], md=4),
-                    dbc.Col([
-                        html.Div(id="recommendations-container", className="chart-container mb-4")
-                    ], md=4)
-                ]),
-            ]
-        ),
-        
-        # Stock Picks Section
-        html.Hr(className="border-secondary my-4"),
-        dbc.Row([
-            dbc.Col([
-                html.H3("🎯 Daily Stock Picks", className="mb-3", 
-                       style={'fontFamily': 'JetBrains Mono', 
-                              'background': 'linear-gradient(135deg, #00d4ff 0%, #ff00aa 100%)',
-                              '-webkit-background-clip': 'text',
-                              '-webkit-text-fill-color': 'transparent'}),
-                html.P("Top 80 liquid stocks analyzed for volatility, liquidity, and momentum", 
-                       className="text-muted small mb-3"),
-                dbc.Button(
-                    "🔄 Scan Market",
-                    id="scan-btn",
-                    color="info",
-                    className="mb-4",
-                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                ),
-            ], width=12)
-        ]),
-        
-        dcc.Loading(
-            id="loading-picks",
-            type="circle",
-            color="#00d4ff",
-            children=[
-                dbc.Row([
-                    # Day Trade Picks
-                    dbc.Col([
-                        html.Div([
-                            html.H5("⚡ Day Trade", className="mb-2", 
-                                   style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("High volatility, liquid stocks for intraday moves", 
-                                   className="text-muted small mb-2"),
-                            html.Div(id="daytrade-picks", style={
-                                'maxHeight': '500px',
-                                'overflowY': 'auto',
-                                'paddingRight': '10px'
-                            })
-                        ], className="chart-container mb-4")
-                    ], md=4),
-                    
-                    # Swing Trade Picks
-                    dbc.Col([
-                        html.Div([
-                            html.H5("🌊 Swing Trade", className="mb-2",
-                                   style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("Trending stocks for multi-day holds (2-10 days)", 
-                                   className="text-muted small mb-2"),
-                            html.Div(id="swing-picks", style={
-                                'maxHeight': '500px',
-                                'overflowY': 'auto',
-                                'paddingRight': '10px'
-                            })
-                        ], className="chart-container mb-4")
-                    ], md=4),
-                    
-                    # Long Term Picks
-                    dbc.Col([
-                        html.Div([
-                            html.H5("🏦 Long Term", className="mb-2",
-                                   style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("Stable, lower volatility stocks for investing", 
-                                   className="text-muted small mb-2"),
-                            html.Div(id="longterm-picks", style={
-                                'maxHeight': '500px',
-                                'overflowY': 'auto',
-                                'paddingRight': '10px'
-                            })
-                        ], className="chart-container mb-4")
-                    ], md=4),
-                ])
-            ]
-        ),
-        
-        # Investment Portfolio Builder Section
-        html.Hr(className="border-secondary my-4"),
-        dbc.Row([
-            dbc.Col([
-                html.H3("💰 Investment Portfolio Builder", className="mb-2", 
-                       style={'fontFamily': 'JetBrains Mono', 
-                              'background': 'linear-gradient(135deg, #00ff88 0%, #00d4ff 100%)',
-                              '-webkit-background-clip': 'text',
-                              '-webkit-text-fill-color': 'transparent'}),
-                html.P("AI-powered portfolio recommendations to grow your investment", 
-                       className="text-muted small mb-3"),
-            ], width=12)
-        ]),
-        
-        dbc.Row([
-            dbc.Col([
-                html.Div([
+                            html.Div([
+                                dcc.Graph(id="price-volatility-chart", config={'displayModeBar': False})
+                            ], className="chart-container mb-4")
+                        ], width=12)
+                    ]),
                     dbc.Row([
                         dbc.Col([
-                            dbc.Label("Starting Investment ($)", className="text-muted small"),
-                            dbc.Input(
-                                id="investment-amount",
-                                type="number",
-                                value=50000,
-                                min=1000,
-                                step=1000,
-                                className="bg-dark text-light border-secondary",
-                                style={'fontFamily': 'JetBrains Mono'}
-                            )
+                            html.Div([
+                                dcc.Graph(id="price-forecast-chart", config={'displayModeBar': False})
+                            ], className="chart-container mb-4")
+                        ], md=6),
+                        dbc.Col([
+                            html.Div([
+                                dcc.Graph(id="forecast-chart", config={'displayModeBar': False})
+                            ], className="chart-container mb-4")
+                        ], md=6)
+                    ]),
+                    dbc.Row([
+                        dbc.Col([
+                            html.Div([
+                                dcc.Graph(id="distribution-chart", config={'displayModeBar': False})
+                            ], className="chart-container mb-4")
                         ], md=4),
                         dbc.Col([
-                            dbc.Label("Target Amount ($)", className="text-muted small"),
-                            dbc.Input(
-                                id="target-amount",
-                                type="number",
-                                value=100000,
-                                min=1000,
-                                step=1000,
-                                className="bg-dark text-light border-secondary",
-                                style={'fontFamily': 'JetBrains Mono'}
-                            )
-                        ], md=3),
+                            html.Div([
+                                dcc.Graph(id="range-chart", config={'displayModeBar': False})
+                            ], className="chart-container mb-4")
+                        ], md=4),
                         dbc.Col([
-                            dbc.Label("Investment Timeline", className="text-muted small"),
-                            dbc.Select(
-                                id="investment-timeline",
-                                options=[
-                                    {'label': '1 Year', 'value': 1},
-                                    {'label': '2 Years', 'value': 2},
-                                    {'label': '3 Years', 'value': 3},
-                                    {'label': '4 Years', 'value': 4},
-                                    {'label': '5 Years', 'value': 5},
-                                    {'label': '6 Years', 'value': 6},
-                                    {'label': '7 Years', 'value': 7},
-                                    {'label': '8 Years', 'value': 8},
-                                    {'label': '9 Years', 'value': 9},
-                                    {'label': '10 Years', 'value': 10},
-                                ],
-                                value=2,
-                                className="bg-dark text-light border-secondary",
-                                style={'fontFamily': 'JetBrains Mono'}
-                            )
-                        ], md=2),
-                        dbc.Col([
-                            dbc.Label(" ", className="small"),
-                            dbc.Button(
-                                "🔮 Build Portfolio",
-                                id="build-portfolio-btn",
-                                color="success",
-                                className="w-100",
-                                style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                            )
-                        ], md=3, className="d-flex align-items-end")
-                    ])
-                ], className="input-group mb-4")
-            ], width=12)
+                            html.Div(id="recommendations-container", className="chart-container mb-4")
+                        ], md=4)
+                    ]),
+                ]
+            ),
         ]),
         
-        dcc.Loading(
-            id="loading-portfolio",
-            type="circle",
-            color="#00ff88",
-            children=[
-                html.Div(id="portfolio-results")
-            ]
-        ),
-        
-        # Live Stock News Section
-        html.Hr(className="border-secondary my-4"),
-        dbc.Row([
-            dbc.Col([
-                html.H3("📰 Live Market News", className="mb-2", 
-                       style={'fontFamily': 'JetBrains Mono', 
-                              'background': 'linear-gradient(135deg, #ffd93d 0%, #ff6b35 100%)',
-                              '-webkit-background-clip': 'text',
-                              '-webkit-text-fill-color': 'transparent'}),
-                html.P("Real-time news from 80+ stocks across all sectors: mergers, acquisitions, FDA approvals, earnings & more", 
-                       className="text-muted small mb-3"),
-            ], width=9),
-            dbc.Col([
-                dbc.Button(
-                    "🔄 Refresh News",
-                    id="refresh-news-btn",
-                    color="warning",
-                    className="mb-3",
-                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                ),
-            ], width=3, className="text-end")
-        ]),
-        
-        # News category filters
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.Span("Filter: ", className="text-muted me-2", style={'fontSize': '0.85rem'}),
-                    dbc.ButtonGroup([
-                        dbc.Button("All", id="filter-all", color="secondary", size="sm", outline=True, className="me-1"),
-                        dbc.Button("🤝 M&A", id="filter-ma", color="secondary", size="sm", outline=True, className="me-1"),
-                        dbc.Button("🏛️ Regulatory", id="filter-reg", color="secondary", size="sm", outline=True, className="me-1"),
-                        dbc.Button("📊 Earnings", id="filter-earn", color="secondary", size="sm", outline=True, className="me-1"),
-                        dbc.Button("📈 Analyst", id="filter-analyst", color="secondary", size="sm", outline=True, className="me-1"),
-                        dbc.Button("🚀 Product", id="filter-prod", color="secondary", size="sm", outline=True, className="me-1"),
-                        dbc.Button("📉 Market", id="filter-market", color="secondary", size="sm", outline=True, className="me-1"),
-                        dbc.Button("👔 Leadership", id="filter-leader", color="secondary", size="sm", outline=True),
-                    ], size="sm")
-                ], className="mb-3", style={'overflowX': 'auto', 'whiteSpace': 'nowrap'})
-            ], width=12)
-        ]),
-        
-        dcc.Loading(
-            id="loading-news",
-            type="circle",
-            color="#ffd93d",
-            children=[
-                html.Div(id="news-container", style={
-                    'maxHeight': '800px',
-                    'overflowY': 'auto',
-                    'paddingRight': '10px'
-                })
-            ]
-        ),
-        
-        # Store for news data (for filtering)
-        dcc.Store(id='news-store'),
-        
-        # Auto-refresh interval (every 5 minutes)
-        dcc.Interval(
-            id='news-interval',
-            interval=5*60*1000,  # 5 minutes in milliseconds
-            n_intervals=0
-        ),
-        
-        # Market Movers Section
-        html.Hr(className="border-secondary my-4"),
-        dbc.Row([
-            dbc.Col([
-                html.H3("🔥 Market Movers", className="mb-2", 
-                       style={'fontFamily': 'JetBrains Mono', 
-                              'background': 'linear-gradient(135deg, #ff6b35 0%, #ff00aa 100%)',
-                              '-webkit-background-clip': 'text',
-                              '-webkit-text-fill-color': 'transparent'}),
-                html.P("Real-time most active, gainers, losers, 52-week highs/lows, and dividend stocks", 
-                       className="text-muted small mb-3"),
-            ], width=9),
-            dbc.Col([
-                dbc.Button(
-                    "🔄 Refresh Movers",
-                    id="refresh-movers-btn",
-                    color="danger",
-                    className="mb-3",
-                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                ),
-            ], width=3, className="text-end")
-        ]),
-        
-        dcc.Loading(
-            id="loading-movers",
-            type="circle",
-            color="#ff6b35",
-            children=[
-                dbc.Row([
-                    # Most Active
-                    dbc.Col([
-                        html.Div([
-                            html.H5("📊 Most Active", className="mb-2", 
-                                   style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("Highest trading volume today", className="text-muted small mb-2"),
-                            html.Div(id="most-active-list", style={
-                                'maxHeight': '400px', 'overflowY': 'auto'
-                            })
-                        ], className="chart-container mb-3")
-                    ], md=4),
-                    
-                    # Top Gainers
-                    dbc.Col([
-                        html.Div([
-                            html.H5("🚀 Top Gainers", className="mb-2", 
-                                   style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("Biggest price increases today", className="text-muted small mb-2"),
-                            html.Div(id="top-gainers-list", style={
-                                'maxHeight': '400px', 'overflowY': 'auto'
-                            })
-                        ], className="chart-container mb-3")
-                    ], md=4),
-                    
-                    # Top Losers
-                    dbc.Col([
-                        html.Div([
-                            html.H5("📉 Top Losers", className="mb-2", 
-                                   style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("Biggest price decreases today", className="text-muted small mb-2"),
-                            html.Div(id="top-losers-list", style={
-                                'maxHeight': '400px', 'overflowY': 'auto'
-                            })
-                        ], className="chart-container mb-3")
-                    ], md=4),
-                ]),
-                
-                dbc.Row([
-                    # 52-Week Highs
-                    dbc.Col([
-                        html.Div([
-                            html.H5("⬆️ 52-Week Highs", className="mb-2", 
-                                   style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("Near or at yearly highs", className="text-muted small mb-2"),
-                            html.Div(id="week52-high-list", style={
-                                'maxHeight': '400px', 'overflowY': 'auto'
-                            })
-                        ], className="chart-container mb-3")
-                    ], md=4),
-                    
-                    # 52-Week Lows
-                    dbc.Col([
-                        html.Div([
-                            html.H5("⬇️ 52-Week Lows", className="mb-2", 
-                                   style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("Near or at yearly lows", className="text-muted small mb-2"),
-                            html.Div(id="week52-low-list", style={
-                                'maxHeight': '400px', 'overflowY': 'auto'
-                            })
-                        ], className="chart-container mb-3")
-                    ], md=4),
-                    
-                    # Dividend Stocks
-                    dbc.Col([
-                        html.Div([
-                            html.H5("💰 Top Dividends", className="mb-2", 
-                                   style={'color': '#ffd93d', 'fontFamily': 'JetBrains Mono'}),
-                            html.P("Highest dividend yields", className="text-muted small mb-2"),
-                            html.Div(id="dividend-list", style={
-                                'maxHeight': '400px', 'overflowY': 'auto'
-                            })
-                        ], className="chart-container mb-3")
-                    ], md=4),
-                ]),
-            ]
-        ),
-        
-        # Auto-refresh interval for market movers (every 5 minutes)
-        dcc.Interval(
-            id='movers-interval',
-            interval=5*60*1000,  # 5 minutes in milliseconds
-            n_intervals=0
-        ),
-        
-        # Daily Buy Recommendations Section
-        html.Hr(className="border-secondary my-4"),
-        dbc.Row([
-            dbc.Col([
-                html.H3("🎯 Daily Buy Recommendations", className="mb-2", 
-                       style={'fontFamily': 'JetBrains Mono', 
-                              'background': 'linear-gradient(135deg, #00ff88 0%, #00d4ff 100%)',
-                              '-webkit-background-clip': 'text',
-                              '-webkit-text-fill-color': 'transparent'}),
-                html.P("AI-analyzed stock picks with detailed buy reasons based on momentum, technicals & fundamentals", 
-                       className="text-muted small mb-3"),
-            ], width=12)
-        ]),
-        
-        # Price filter row
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    dbc.Label("💰 Filter by Price Range:", className="text-muted small me-3"),
-                    dbc.Select(
-                        id="price-range-filter",
-                        options=[
-                            {'label': 'All Prices', 'value': 'all'},
-                            {'label': '$500 - $1000+', 'value': '500-1000'},
-                            {'label': '$100 - $500', 'value': '100-500'},
-                            {'label': '$10 - $100', 'value': '10-100'},
-                            {'label': '$10 or Below', 'value': '0-10'},
-                        ],
-                        value='all',
-                        className="bg-dark text-light border-secondary",
-                        style={'width': '200px', 'display': 'inline-block', 'fontFamily': 'JetBrains Mono'}
+        # ===== SECTION 2: STOCK PICKS =====
+        html.Div(id="section-picks", style={'display': 'none'}, children=[
+            dbc.Row([
+                dbc.Col([
+                    html.H3("🎯 Daily Stock Picks", className="mb-3", 
+                           style={'fontFamily': 'JetBrains Mono', 
+                                  'background': 'linear-gradient(135deg, #00d4ff 0%, #ff00aa 100%)',
+                                  '-webkit-background-clip': 'text',
+                                  '-webkit-text-fill-color': 'transparent'}),
+                    html.P("Top 80 liquid stocks analyzed for volatility, liquidity, and momentum", 
+                           className="text-muted small mb-3"),
+                    dbc.Button(
+                        "🔄 Scan Market",
+                        id="scan-btn",
+                        color="info",
+                        className="mb-4",
+                        style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
                     ),
-                ], style={'display': 'flex', 'alignItems': 'center'})
-            ], width=9),
-            dbc.Col([
-                dbc.Button(
-                    "🔄 Get Picks",
-                    id="refresh-recommendations-btn",
-                    color="success",
-                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                ),
-            ], width=3, className="text-end")
-        ], className="mb-3"),
+                ], width=12)
+            ]),
+            
+            dcc.Loading(
+                id="loading-picks",
+                type="circle",
+                color="#00d4ff",
+                children=[
+                    dbc.Row([
+                        dbc.Col([
+                            html.Div([
+                                html.H5("⚡ Day Trade", className="mb-2", 
+                                       style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("High volatility, liquid stocks for intraday moves", 
+                                       className="text-muted small mb-2"),
+                                html.Div(id="daytrade-picks", style={
+                                    'maxHeight': '500px',
+                                    'overflowY': 'auto',
+                                    'paddingRight': '10px'
+                                })
+                            ], className="chart-container mb-4")
+                        ], md=4),
+                        dbc.Col([
+                            html.Div([
+                                html.H5("🌊 Swing Trade", className="mb-2",
+                                       style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("Trending stocks for multi-day holds (2-10 days)", 
+                                       className="text-muted small mb-2"),
+                                html.Div(id="swing-picks", style={
+                                    'maxHeight': '500px',
+                                    'overflowY': 'auto',
+                                    'paddingRight': '10px'
+                                })
+                            ], className="chart-container mb-4")
+                        ], md=4),
+                        dbc.Col([
+                            html.Div([
+                                html.H5("🏦 Long Term", className="mb-2",
+                                       style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("Stable, lower volatility stocks for investing", 
+                                       className="text-muted small mb-2"),
+                                html.Div(id="longterm-picks", style={
+                                    'maxHeight': '500px',
+                                    'overflowY': 'auto',
+                                    'paddingRight': '10px'
+                                })
+                            ], className="chart-container mb-4")
+                        ], md=4),
+                    ])
+                ]
+            ),
+        ]),
         
-        dcc.Loading(
-            id="loading-recommendations",
-            type="circle",
-            color="#00ff88",
-            children=[
-                html.Div(id="recommendations-list")
-            ]
-        ),
+        # ===== SECTION 3: PORTFOLIO BUILDER =====
+        html.Div(id="section-portfolio", style={'display': 'none'}, children=[
+            dbc.Row([
+                dbc.Col([
+                    html.H3("💰 Investment Portfolio Builder", className="mb-2", 
+                           style={'fontFamily': 'JetBrains Mono', 
+                                  'background': 'linear-gradient(135deg, #00ff88 0%, #00d4ff 100%)',
+                                  '-webkit-background-clip': 'text',
+                                  '-webkit-text-fill-color': 'transparent'}),
+                    html.P("AI-powered portfolio recommendations to grow your investment", 
+                           className="text-muted small mb-3"),
+                ], width=12)
+            ]),
+            
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("Starting Investment ($)", className="text-muted small"),
+                                dbc.Input(
+                                    id="investment-amount",
+                                    type="number",
+                                    value=50000,
+                                    min=1000,
+                                    step=1000,
+                                    className="bg-dark text-light border-secondary",
+                                    style={'fontFamily': 'JetBrains Mono'}
+                                )
+                            ], md=4),
+                            dbc.Col([
+                                dbc.Label("Target Amount ($)", className="text-muted small"),
+                                dbc.Input(
+                                    id="target-amount",
+                                    type="number",
+                                    value=100000,
+                                    min=1000,
+                                    step=1000,
+                                    className="bg-dark text-light border-secondary",
+                                    style={'fontFamily': 'JetBrains Mono'}
+                                )
+                            ], md=3),
+                            dbc.Col([
+                                dbc.Label("Investment Timeline", className="text-muted small"),
+                                dbc.Select(
+                                    id="investment-timeline",
+                                    options=[
+                                        {'label': '1 Year', 'value': 1},
+                                        {'label': '2 Years', 'value': 2},
+                                        {'label': '3 Years', 'value': 3},
+                                        {'label': '4 Years', 'value': 4},
+                                        {'label': '5 Years', 'value': 5},
+                                        {'label': '6 Years', 'value': 6},
+                                        {'label': '7 Years', 'value': 7},
+                                        {'label': '8 Years', 'value': 8},
+                                        {'label': '9 Years', 'value': 9},
+                                        {'label': '10 Years', 'value': 10},
+                                    ],
+                                    value=2,
+                                    className="bg-dark text-light border-secondary",
+                                    style={'fontFamily': 'JetBrains Mono'}
+                                )
+                            ], md=2),
+                            dbc.Col([
+                                dbc.Label(" ", className="small"),
+                                dbc.Button(
+                                    "🔮 Build Portfolio",
+                                    id="build-portfolio-btn",
+                                    color="success",
+                                    className="w-100",
+                                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                                )
+                            ], md=3, className="d-flex align-items-end")
+                        ])
+                    ], className="input-group mb-4")
+                ], width=12)
+            ]),
+            
+            dcc.Loading(
+                id="loading-portfolio",
+                type="circle",
+                color="#00ff88",
+                children=[
+                    html.Div(id="portfolio-results")
+                ]
+            ),
+        ]),
         
-        # Store for recommendations data (for filtering without refetching)
-        dcc.Store(id='recommendations-store'),
+        # ===== SECTION 4: NEWS =====
+        html.Div(id="section-news", style={'display': 'none'}, children=[
+            dbc.Row([
+                dbc.Col([
+                    html.H3("📰 Live Market News", className="mb-2", 
+                           style={'fontFamily': 'JetBrains Mono', 
+                                  'background': 'linear-gradient(135deg, #ffd93d 0%, #ff6b35 100%)',
+                                  '-webkit-background-clip': 'text',
+                                  '-webkit-text-fill-color': 'transparent'}),
+                    html.P("Real-time news from 80+ stocks across all sectors: mergers, acquisitions, FDA approvals, earnings & more", 
+                           className="text-muted small mb-3"),
+                ], width=9),
+                dbc.Col([
+                    dbc.Button(
+                        "🔄 Refresh News",
+                        id="refresh-news-btn",
+                        color="warning",
+                        className="mb-3",
+                        style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                    ),
+                ], width=3, className="text-end")
+            ]),
+            
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        html.Span("Filter: ", className="text-muted me-2", style={'fontSize': '0.85rem'}),
+                        dbc.ButtonGroup([
+                            dbc.Button("All", id="filter-all", color="secondary", size="sm", outline=True, className="me-1"),
+                            dbc.Button("🤝 M&A", id="filter-ma", color="secondary", size="sm", outline=True, className="me-1"),
+                            dbc.Button("🏛️ Regulatory", id="filter-reg", color="secondary", size="sm", outline=True, className="me-1"),
+                            dbc.Button("📊 Earnings", id="filter-earn", color="secondary", size="sm", outline=True, className="me-1"),
+                            dbc.Button("📈 Analyst", id="filter-analyst", color="secondary", size="sm", outline=True, className="me-1"),
+                            dbc.Button("🚀 Product", id="filter-prod", color="secondary", size="sm", outline=True, className="me-1"),
+                            dbc.Button("📉 Market", id="filter-market", color="secondary", size="sm", outline=True, className="me-1"),
+                            dbc.Button("👔 Leadership", id="filter-leader", color="secondary", size="sm", outline=True),
+                        ], size="sm")
+                    ], className="mb-3", style={'overflowX': 'auto', 'whiteSpace': 'nowrap'})
+                ], width=12)
+            ]),
+            
+            dcc.Loading(
+                id="loading-news",
+                type="circle",
+                color="#ffd93d",
+                children=[
+                    html.Div(id="news-container", style={
+                        'maxHeight': '800px',
+                        'overflowY': 'auto',
+                        'paddingRight': '10px'
+                    })
+                ]
+            ),
+            
+            dcc.Store(id='news-store'),
+            dcc.Interval(id='news-interval', interval=5*60*1000, n_intervals=0),
+        ]),
         
-        # Auto-refresh interval for recommendations (every 10 minutes)
-        dcc.Interval(
-            id='recommendations-interval',
-            interval=10*60*1000,  # 10 minutes in milliseconds
-            n_intervals=0
-        ),
+        # ===== SECTION 5: MARKET MOVERS =====
+        html.Div(id="section-movers", style={'display': 'none'}, children=[
+            dbc.Row([
+                dbc.Col([
+                    html.H3("🔥 Market Movers", className="mb-2", 
+                           style={'fontFamily': 'JetBrains Mono', 
+                                  'background': 'linear-gradient(135deg, #ff6b35 0%, #ff00aa 100%)',
+                                  '-webkit-background-clip': 'text',
+                                  '-webkit-text-fill-color': 'transparent'}),
+                    html.P("Real-time most active, gainers, losers, 52-week highs/lows, and dividend stocks", 
+                           className="text-muted small mb-3"),
+                ], width=9),
+                dbc.Col([
+                    dbc.Button(
+                        "🔄 Refresh Movers",
+                        id="refresh-movers-btn",
+                        color="danger",
+                        className="mb-3",
+                        style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                    ),
+                ], width=3, className="text-end")
+            ]),
+            
+            dcc.Loading(
+                id="loading-movers",
+                type="circle",
+                color="#ff6b35",
+                children=[
+                    dbc.Row([
+                        dbc.Col([
+                            html.Div([
+                                html.H5("📊 Most Active", className="mb-2", 
+                                       style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("Highest trading volume today", className="text-muted small mb-2"),
+                                html.Div(id="most-active-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
+                            ], className="chart-container mb-3")
+                        ], md=4),
+                        dbc.Col([
+                            html.Div([
+                                html.H5("🚀 Top Gainers", className="mb-2", 
+                                       style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("Biggest price increases today", className="text-muted small mb-2"),
+                                html.Div(id="top-gainers-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
+                            ], className="chart-container mb-3")
+                        ], md=4),
+                        dbc.Col([
+                            html.Div([
+                                html.H5("📉 Top Losers", className="mb-2", 
+                                       style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("Biggest price decreases today", className="text-muted small mb-2"),
+                                html.Div(id="top-losers-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
+                            ], className="chart-container mb-3")
+                        ], md=4),
+                    ]),
+                    dbc.Row([
+                        dbc.Col([
+                            html.Div([
+                                html.H5("⬆️ 52-Week Highs", className="mb-2", 
+                                       style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("Near or at yearly highs", className="text-muted small mb-2"),
+                                html.Div(id="week52-high-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
+                            ], className="chart-container mb-3")
+                        ], md=4),
+                        dbc.Col([
+                            html.Div([
+                                html.H5("⬇️ 52-Week Lows", className="mb-2", 
+                                       style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("Near or at yearly lows", className="text-muted small mb-2"),
+                                html.Div(id="week52-low-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
+                            ], className="chart-container mb-3")
+                        ], md=4),
+                        dbc.Col([
+                            html.Div([
+                                html.H5("💰 Top Dividends", className="mb-2", 
+                                       style={'color': '#ffd93d', 'fontFamily': 'JetBrains Mono'}),
+                                html.P("Highest dividend yields", className="text-muted small mb-2"),
+                                html.Div(id="dividend-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
+                            ], className="chart-container mb-3")
+                        ], md=4),
+                    ]),
+                ]
+            ),
+            dcc.Interval(id='movers-interval', interval=5*60*1000, n_intervals=0),
+        ]),
         
-        # Disclaimer
+        # ===== SECTION 6: BUY RECOMMENDATIONS =====
+        html.Div(id="section-recommendations", style={'display': 'none'}, children=[
+            dbc.Row([
+                dbc.Col([
+                    html.H3("🎯 Daily Buy Recommendations", className="mb-2", 
+                           style={'fontFamily': 'JetBrains Mono', 
+                                  'background': 'linear-gradient(135deg, #00ff88 0%, #00d4ff 100%)',
+                                  '-webkit-background-clip': 'text',
+                                  '-webkit-text-fill-color': 'transparent'}),
+                    html.P("AI-analyzed stock picks with detailed buy reasons based on momentum, technicals & fundamentals", 
+                           className="text-muted small mb-3"),
+                ], width=12)
+            ]),
+            
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        dbc.Label("💰 Filter by Price Range:", className="text-muted small me-3"),
+                        dbc.Select(
+                            id="price-range-filter",
+                            options=[
+                                {'label': 'All Prices', 'value': 'all'},
+                                {'label': '$500 - $1000+', 'value': '500-1000'},
+                                {'label': '$100 - $500', 'value': '100-500'},
+                                {'label': '$10 - $100', 'value': '10-100'},
+                                {'label': '$10 or Below', 'value': '0-10'},
+                            ],
+                            value='all',
+                            className="bg-dark text-light border-secondary",
+                            style={'width': '200px', 'display': 'inline-block', 'fontFamily': 'JetBrains Mono'}
+                        ),
+                    ], style={'display': 'flex', 'alignItems': 'center'})
+                ], width=9),
+                dbc.Col([
+                    dbc.Button(
+                        "🔄 Get Picks",
+                        id="refresh-recommendations-btn",
+                        color="success",
+                        style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                    ),
+                ], width=3, className="text-end")
+            ], className="mb-3"),
+            
+            dcc.Loading(
+                id="loading-recommendations",
+                type="circle",
+                color="#00ff88",
+                children=[
+                    html.Div(id="recommendations-list")
+                ]
+            ),
+            dcc.Store(id='recommendations-store'),
+            dcc.Interval(id='recommendations-interval', interval=10*60*1000, n_intervals=0),
+        ]),
+        
+        # Disclaimer (always visible)
         dbc.Row([
             dbc.Col([
                 html.Div([
@@ -2294,6 +2262,68 @@ app.layout = html.Div([
         
     ], fluid=True, style={'maxWidth': '1400px'})
 ])
+
+
+# ============================================
+# NAVIGATION CALLBACK
+# ============================================
+
+@app.callback(
+    [Output("section-volatility", "style"),
+     Output("section-picks", "style"),
+     Output("section-recommendations", "style"),
+     Output("section-movers", "style"),
+     Output("section-news", "style"),
+     Output("section-portfolio", "style"),
+     Output("nav-volatility", "color"),
+     Output("nav-picks", "color"),
+     Output("nav-recommendations", "color"),
+     Output("nav-movers", "color"),
+     Output("nav-news", "color"),
+     Output("nav-portfolio", "color")],
+    [Input("nav-volatility", "n_clicks"),
+     Input("nav-picks", "n_clicks"),
+     Input("nav-recommendations", "n_clicks"),
+     Input("nav-movers", "n_clicks"),
+     Input("nav-news", "n_clicks"),
+     Input("nav-portfolio", "n_clicks")],
+    prevent_initial_call=False
+)
+def switch_section(vol_clicks, picks_clicks, reco_clicks, movers_clicks, news_clicks, portfolio_clicks):
+    """Switch between dashboard sections based on navigation button clicks"""
+    from dash import ctx
+    
+    # Default: show volatility section
+    triggered = ctx.triggered_id if ctx.triggered_id else "nav-volatility"
+    
+    # Visibility styles
+    show = {'display': 'block'}
+    hide = {'display': 'none'}
+    
+    # Button colors
+    active = "info"
+    inactive = "secondary"
+    
+    # Map triggered button to section
+    section_map = {
+        "nav-volatility": 0,
+        "nav-picks": 1,
+        "nav-recommendations": 2,
+        "nav-movers": 3,
+        "nav-news": 4,
+        "nav-portfolio": 5
+    }
+    
+    active_section = section_map.get(triggered, 0)
+    
+    # Generate outputs
+    section_styles = [hide] * 6
+    section_styles[active_section] = show
+    
+    button_colors = [inactive] * 6
+    button_colors[active_section] = active
+    
+    return (*section_styles, *button_colors)
 
 
 @app.callback(

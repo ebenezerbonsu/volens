@@ -232,6 +232,212 @@ def get_time_ago(timestamp: int) -> str:
 # MARKET MOVERS FUNCTIONS
 # ============================================
 
+def generate_buy_recommendations(num_picks: int = 10) -> list:
+    """
+    Generate daily stock buy recommendations with detailed reasoning.
+    Analyzes technical indicators, momentum, volatility, and fundamentals.
+    """
+    import sys
+    
+    def log(msg):
+        print(f"[RECOMMEND] {msg}")
+        sys.stdout.flush()
+    
+    # Stocks to analyze for recommendations
+    recommendation_universe = [
+        # High-growth tech
+        'NVDA', 'AMD', 'AVGO', 'SMCI', 'ARM', 'PLTR', 'CRWD', 'NET', 'DDOG', 'SNOW',
+        # Mega-cap tech
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'CRM', 'ORCL', 'ADBE',
+        # Finance
+        'JPM', 'GS', 'V', 'MA', 'BLK', 'COIN',
+        # Healthcare
+        'LLY', 'UNH', 'ABBV', 'MRK', 'ISRG', 'MRNA',
+        # Consumer
+        'COST', 'WMT', 'HD', 'NKE', 'SBUX', 'MCD',
+        # Industrial
+        'CAT', 'GE', 'HON', 'BA', 'RTX',
+        # Energy
+        'XOM', 'CVX', 'COP', 'SLB',
+        # Clean energy
+        'ENPH', 'FSLR', 'NEE',
+        # Entertainment
+        'NFLX', 'DIS', 'SPOT',
+        # High momentum
+        'MSTR', 'MARA', 'RIOT',
+    ]
+    
+    candidates = []
+    log(f"Analyzing {len(recommendation_universe)} stocks for buy recommendations...")
+    
+    def analyze_for_recommendation(ticker):
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period='3mo')
+            
+            if hist.empty or len(hist) < 20:
+                return None
+            
+            info = stock.info
+            
+            current_price = hist['Close'].iloc[-1]
+            
+            # Calculate key metrics
+            # 1. Price momentum (5-day, 20-day, 60-day returns)
+            ret_5d = (hist['Close'].iloc[-1] / hist['Close'].iloc[-5] - 1) * 100 if len(hist) >= 5 else 0
+            ret_20d = (hist['Close'].iloc[-1] / hist['Close'].iloc[-20] - 1) * 100 if len(hist) >= 20 else 0
+            ret_60d = (hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100
+            
+            # 2. Volatility
+            returns = hist['Close'].pct_change().dropna()
+            volatility = returns.std() * np.sqrt(252) * 100  # Annualized %
+            
+            # 3. Volume trend
+            avg_volume_recent = hist['Volume'].tail(5).mean()
+            avg_volume_older = hist['Volume'].tail(20).mean()
+            volume_surge = (avg_volume_recent / avg_volume_older - 1) * 100 if avg_volume_older > 0 else 0
+            
+            # 4. 52-week position
+            week_52_high = info.get('fiftyTwoWeekHigh', current_price)
+            week_52_low = info.get('fiftyTwoWeekLow', current_price)
+            pct_from_high = ((current_price - week_52_high) / week_52_high * 100) if week_52_high else 0
+            pct_from_low = ((current_price - week_52_low) / week_52_low * 100) if week_52_low else 0
+            
+            # 5. Moving averages
+            ma_20 = hist['Close'].tail(20).mean()
+            ma_50 = hist['Close'].tail(50).mean() if len(hist) >= 50 else ma_20
+            above_ma_20 = current_price > ma_20
+            above_ma_50 = current_price > ma_50
+            
+            # 6. RSI (simplified)
+            gains = returns[returns > 0].mean() if len(returns[returns > 0]) > 0 else 0
+            losses = abs(returns[returns < 0].mean()) if len(returns[returns < 0]) > 0 else 0.001
+            rs = gains / losses
+            rsi = 100 - (100 / (1 + rs))
+            
+            # 7. Fundamentals
+            pe_ratio = info.get('trailingPE', 0) or 0
+            market_cap = info.get('marketCap', 0) or 0
+            revenue_growth = info.get('revenueGrowth', 0) or 0
+            
+            # Calculate buy score (0-100)
+            score = 50  # Base score
+            reasons = []
+            
+            # Momentum scoring
+            if ret_5d > 3:
+                score += 10
+                reasons.append(f"Strong 5-day momentum (+{ret_5d:.1f}%)")
+            elif ret_5d > 0:
+                score += 5
+                reasons.append(f"Positive short-term trend (+{ret_5d:.1f}%)")
+            
+            if ret_20d > 10:
+                score += 15
+                reasons.append(f"Excellent monthly performance (+{ret_20d:.1f}%)")
+            elif ret_20d > 5:
+                score += 10
+                reasons.append(f"Solid 20-day gains (+{ret_20d:.1f}%)")
+            elif ret_20d < -10:
+                score -= 10
+                reasons.append(f"Potential bounce play (down {ret_20d:.1f}%)")
+            
+            # Trend scoring
+            if above_ma_20 and above_ma_50:
+                score += 15
+                reasons.append("Trading above 20 & 50-day moving averages (bullish trend)")
+            elif above_ma_20:
+                score += 8
+                reasons.append("Above 20-day moving average")
+            
+            # Volume analysis
+            if volume_surge > 50:
+                score += 10
+                reasons.append(f"High volume surge (+{volume_surge:.0f}% above average) signals strong interest")
+            elif volume_surge > 20:
+                score += 5
+                reasons.append("Increasing trading volume")
+            
+            # RSI analysis
+            if 30 < rsi < 50:
+                score += 10
+                reasons.append(f"RSI at {rsi:.0f} - potential oversold bounce opportunity")
+            elif 50 < rsi < 70:
+                score += 5
+                reasons.append(f"RSI at {rsi:.0f} - healthy momentum")
+            elif rsi < 30:
+                score += 8
+                reasons.append(f"RSI at {rsi:.0f} - oversold, potential reversal candidate")
+            
+            # 52-week analysis
+            if pct_from_high > -5:
+                score += 10
+                reasons.append(f"Near 52-week high ({pct_from_high:+.1f}%) - breakout potential")
+            elif pct_from_low < 15:
+                score += 8
+                reasons.append(f"Near 52-week low - potential value entry point")
+            
+            # Volatility (prefer moderate volatility for swing trades)
+            if 20 < volatility < 50:
+                score += 5
+                reasons.append(f"Moderate volatility ({volatility:.0f}%) offers good risk/reward")
+            elif volatility > 60:
+                reasons.append(f"⚠️ High volatility ({volatility:.0f}%) - higher risk/reward")
+            
+            # Fundamentals
+            if revenue_growth and revenue_growth > 0.15:
+                score += 10
+                reasons.append(f"Strong revenue growth ({revenue_growth*100:.0f}% YoY)")
+            
+            if 10 < pe_ratio < 30:
+                score += 5
+                reasons.append(f"Reasonable P/E ratio ({pe_ratio:.1f})")
+            elif pe_ratio > 50:
+                reasons.append(f"High P/E ({pe_ratio:.0f}) - priced for growth")
+            
+            # Market cap preference (larger = more stable)
+            if market_cap > 100e9:
+                score += 5
+                reasons.append("Large-cap stability")
+            elif market_cap > 10e9:
+                score += 3
+            
+            return {
+                'ticker': ticker,
+                'price': current_price,
+                'score': min(score, 100),
+                'ret_5d': ret_5d,
+                'ret_20d': ret_20d,
+                'volatility': volatility,
+                'rsi': rsi,
+                'volume_surge': volume_surge,
+                'pct_from_high': pct_from_high,
+                'reasons': reasons[:5],  # Top 5 reasons
+                'name': info.get('shortName', ticker)[:30],
+                'sector': info.get('sector', 'Unknown'),
+                'signal': 'STRONG BUY' if score >= 80 else 'BUY' if score >= 65 else 'WATCH'
+            }
+        except Exception as e:
+            return None
+    
+    # Parallel analysis
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(analyze_for_recommendation, ticker): ticker 
+                   for ticker in recommendation_universe}
+        
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result and result['score'] >= 55:  # Only include decent candidates
+                candidates.append(result)
+    
+    log(f"Found {len(candidates)} buy candidates")
+    
+    # Sort by score and return top picks
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    return candidates[:num_picks]
+
+
 def fetch_market_movers() -> dict:
     """
     Fetch market movers: most active, gainers, losers, 52-week highs/lows, dividends.
@@ -1980,6 +2186,45 @@ app.layout = html.Div([
             n_intervals=0
         ),
         
+        # Daily Buy Recommendations Section
+        html.Hr(className="border-secondary my-4"),
+        dbc.Row([
+            dbc.Col([
+                html.H3("🎯 Daily Buy Recommendations", className="mb-2", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #00ff88 0%, #00d4ff 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("AI-analyzed stock picks with detailed buy reasons based on momentum, technicals & fundamentals", 
+                       className="text-muted small mb-3"),
+            ], width=9),
+            dbc.Col([
+                dbc.Button(
+                    "🔄 Get Picks",
+                    id="refresh-recommendations-btn",
+                    color="success",
+                    className="mb-3",
+                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                ),
+            ], width=3, className="text-end")
+        ]),
+        
+        dcc.Loading(
+            id="loading-recommendations",
+            type="circle",
+            color="#00ff88",
+            children=[
+                html.Div(id="recommendations-list")
+            ]
+        ),
+        
+        # Auto-refresh interval for recommendations (every 10 minutes)
+        dcc.Interval(
+            id='recommendations-interval',
+            interval=10*60*1000,  # 10 minutes in milliseconds
+            n_intervals=0
+        ),
+        
         # Disclaimer
         dbc.Row([
             dbc.Col([
@@ -2832,6 +3077,199 @@ def update_market_movers(n_clicks, n_intervals):
         log(traceback.format_exc())
         error_msg = html.P(f"Error loading: {str(e)[:50]}", className="text-danger small")
         return [error_msg] * 6
+
+
+def create_recommendation_card(stock: dict) -> html.Div:
+    """Create a detailed recommendation card with buy reasons"""
+    
+    # Signal colors
+    signal_colors = {
+        'STRONG BUY': {'bg': 'rgba(0, 255, 136, 0.2)', 'text': '#00ff88', 'border': '#00ff88'},
+        'BUY': {'bg': 'rgba(0, 212, 255, 0.15)', 'text': '#00d4ff', 'border': '#00d4ff'},
+        'WATCH': {'bg': 'rgba(255, 217, 61, 0.15)', 'text': '#ffd93d', 'border': '#ffd93d'}
+    }
+    
+    signal = stock.get('signal', 'WATCH')
+    colors = signal_colors.get(signal, signal_colors['WATCH'])
+    
+    # Build reason list
+    reason_items = [
+        html.Li(reason, style={
+            'color': '#ccccdd',
+            'fontSize': '0.8rem',
+            'marginBottom': '4px',
+            'lineHeight': '1.4'
+        }) for reason in stock.get('reasons', [])
+    ]
+    
+    return html.Div([
+        # Header: Ticker, Signal, Price
+        html.Div([
+            html.Div([
+                html.Span(stock['ticker'], style={
+                    'fontFamily': 'JetBrains Mono',
+                    'fontWeight': '700',
+                    'fontSize': '1.3rem',
+                    'color': colors['text']
+                }),
+                html.Span(f" • {stock.get('name', '')}", style={
+                    'color': '#8888aa',
+                    'fontSize': '0.8rem',
+                    'marginLeft': '8px'
+                }),
+            ]),
+            html.Div([
+                html.Span(signal, style={
+                    'background': colors['bg'],
+                    'color': colors['text'],
+                    'padding': '4px 12px',
+                    'borderRadius': '15px',
+                    'fontSize': '0.75rem',
+                    'fontWeight': '700',
+                    'fontFamily': 'JetBrains Mono',
+                    'border': f"1px solid {colors['border']}"
+                }),
+            ])
+        ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '10px'}),
+        
+        # Price and metrics row
+        html.Div([
+            html.Div([
+                html.Span(f"${stock['price']:.2f}", style={
+                    'fontFamily': 'JetBrains Mono',
+                    'fontSize': '1.4rem',
+                    'fontWeight': '600',
+                    'color': '#ffffff'
+                }),
+            ]),
+            html.Div([
+                html.Span(f"Score: {stock['score']}/100", style={
+                    'background': 'rgba(255,255,255,0.1)',
+                    'padding': '3px 10px',
+                    'borderRadius': '10px',
+                    'fontSize': '0.75rem',
+                    'color': colors['text'],
+                    'fontFamily': 'JetBrains Mono'
+                }),
+            ])
+        ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '12px'}),
+        
+        # Quick stats
+        html.Div([
+            html.Span(f"5D: {stock['ret_5d']:+.1f}%", style={
+                'color': '#00ff88' if stock['ret_5d'] >= 0 else '#ff6b35',
+                'fontSize': '0.75rem',
+                'marginRight': '12px',
+                'fontFamily': 'JetBrains Mono'
+            }),
+            html.Span(f"20D: {stock['ret_20d']:+.1f}%", style={
+                'color': '#00ff88' if stock['ret_20d'] >= 0 else '#ff6b35',
+                'fontSize': '0.75rem',
+                'marginRight': '12px',
+                'fontFamily': 'JetBrains Mono'
+            }),
+            html.Span(f"RSI: {stock['rsi']:.0f}", style={
+                'color': '#8888aa',
+                'fontSize': '0.75rem',
+                'fontFamily': 'JetBrains Mono'
+            }),
+        ], style={'marginBottom': '12px', 'paddingBottom': '10px', 'borderBottom': '1px solid rgba(255,255,255,0.1)'}),
+        
+        # Why Buy section
+        html.Div([
+            html.Span("💡 Why Buy:", style={
+                'color': '#ffd93d',
+                'fontWeight': '600',
+                'fontSize': '0.85rem',
+                'display': 'block',
+                'marginBottom': '8px'
+            }),
+            html.Ul(reason_items, style={
+                'margin': '0',
+                'paddingLeft': '20px'
+            })
+        ]),
+        
+    ], style={
+        'background': 'linear-gradient(135deg, rgba(26,26,36,1) 0%, rgba(30,30,45,1) 100%)',
+        'border': f'1px solid {colors["border"]}40',
+        'borderLeft': f'4px solid {colors["border"]}',
+        'borderRadius': '12px',
+        'padding': '16px 20px',
+        'marginBottom': '15px',
+        'boxShadow': '0 4px 15px rgba(0,0,0,0.2)'
+    })
+
+
+@app.callback(
+    Output("recommendations-list", "children"),
+    [Input("refresh-recommendations-btn", "n_clicks"),
+     Input("recommendations-interval", "n_intervals")],
+    prevent_initial_call=False  # Auto-load on page open
+)
+def update_recommendations(n_clicks, n_intervals):
+    """Generate and display buy recommendations"""
+    import sys
+    
+    def log(msg):
+        print(f"[RECO-CB] {msg}")
+        sys.stdout.flush()
+    
+    log(f"Loading recommendations (n_clicks={n_clicks}, intervals={n_intervals})")
+    
+    try:
+        log("Generating buy recommendations...")
+        recommendations = generate_buy_recommendations(num_picks=10)
+        
+        if not recommendations:
+            return html.Div([
+                html.P("📊 Analyzing stocks... No strong buy signals found at this time.", className="text-muted"),
+                html.P("This can happen during market uncertainty. Check back later!", className="text-muted small")
+            ], style={'padding': '20px', 'textAlign': 'center'})
+        
+        log(f"Found {len(recommendations)} recommendations")
+        
+        # Header
+        header = html.Div([
+            html.Div([
+                html.Span(f"🎯 Top {len(recommendations)} Buy Picks", style={
+                    'color': '#00ff88',
+                    'fontFamily': 'JetBrains Mono',
+                    'fontSize': '1rem',
+                    'fontWeight': '600'
+                }),
+                html.Span(f" • Updated {datetime.now().strftime('%H:%M:%S')}", style={
+                    'color': '#8888aa',
+                    'fontSize': '0.75rem',
+                    'marginLeft': '10px'
+                })
+            ]),
+            html.P("Based on momentum, technicals, volume & fundamentals analysis", 
+                   className="text-muted small mb-0 mt-1")
+        ], style={'marginBottom': '20px'})
+        
+        # Create cards
+        cards = [create_recommendation_card(rec) for rec in recommendations]
+        
+        # Split into columns for better layout
+        left_cards = cards[:5]
+        right_cards = cards[5:]
+        
+        content = dbc.Row([
+            dbc.Col(left_cards, md=6),
+            dbc.Col(right_cards, md=6)
+        ])
+        
+        return html.Div([header, content])
+        
+    except Exception as e:
+        import traceback
+        log(f"Error: {e}")
+        log(traceback.format_exc())
+        return html.Div([
+            html.P(f"❌ Error generating recommendations: {str(e)}", className="text-danger"),
+            html.P("Try refreshing in a moment.", className="text-muted small")
+        ])
 
 
 # Run the app

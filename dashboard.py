@@ -243,28 +243,43 @@ def generate_buy_recommendations(num_picks: int = 10) -> list:
         print(f"[RECOMMEND] {msg}")
         sys.stdout.flush()
     
-    # Stocks to analyze for recommendations
+    # Stocks to analyze for recommendations - diverse price ranges
     recommendation_universe = [
-        # High-growth tech
-        'NVDA', 'AMD', 'AVGO', 'SMCI', 'ARM', 'PLTR', 'CRWD', 'NET', 'DDOG', 'SNOW',
-        # Mega-cap tech
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'CRM', 'ORCL', 'ADBE',
-        # Finance
-        'JPM', 'GS', 'V', 'MA', 'BLK', 'COIN',
-        # Healthcare
-        'LLY', 'UNH', 'ABBV', 'MRK', 'ISRG', 'MRNA',
-        # Consumer
-        'COST', 'WMT', 'HD', 'NKE', 'SBUX', 'MCD',
-        # Industrial
+        # Premium ($500+)
+        'AVGO', 'META', 'NFLX', 'COST', 'LLY', 'ISRG', 'MSTR', 'BLK', 'ORLY', 'CMG',
+        
+        # High-priced ($100-$500)
+        'NVDA', 'AMD', 'SMCI', 'ARM', 'PLTR', 'CRWD', 'NET', 'DDOG', 'SNOW',
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'CRM', 'ORCL', 'ADBE',
+        'JPM', 'GS', 'V', 'MA', 'COIN',
+        'UNH', 'ABBV', 'MRK', 'MRNA',
+        'WMT', 'HD', 'NKE', 'SBUX', 'MCD',
         'CAT', 'GE', 'HON', 'BA', 'RTX',
-        # Energy
         'XOM', 'CVX', 'COP', 'SLB',
-        # Clean energy
         'ENPH', 'FSLR', 'NEE',
-        # Entertainment
-        'NFLX', 'DIS', 'SPOT',
-        # High momentum
-        'MSTR', 'MARA', 'RIOT',
+        'DIS', 'SPOT', 'UBER', 'ABNB',
+        
+        # Mid-priced ($10-$100)
+        'INTC', 'MU', 'QCOM', 'MRVL', 'ON',
+        'BAC', 'C', 'WFC', 'SCHW', 'SOFI', 'HOOD',
+        'PFE', 'BMY', 'GILD', 'TEVA',
+        'T', 'VZ', 'TMUS',
+        'F', 'GM', 'RIVN', 'LCID', 'NIO',
+        'SNAP', 'PINS', 'RBLX',
+        'VALE', 'CLF', 'X', 'AA',
+        'CCL', 'RCL', 'DAL', 'UAL', 'AAL',
+        'DKNG', 'PENN',
+        
+        # Lower-priced ($10 and below)
+        'MARA', 'RIOT', 'BITF', 'HUT',
+        'AMC', 'GME',
+        'SIRI', 'WBD',
+        'PLUG', 'FCEL', 'BE',
+        'DNA', 'GEVO', 'NKLA',
+        'BB', 'NOK', 'ERIC',
+        'GRAB', 'PATH',
+        'OPEN', 'WISH', 'CLOV',
+        'TLRY', 'CGC', 'ACB',
     ]
     
     candidates = []
@@ -2197,17 +2212,38 @@ app.layout = html.Div([
                               '-webkit-text-fill-color': 'transparent'}),
                 html.P("AI-analyzed stock picks with detailed buy reasons based on momentum, technicals & fundamentals", 
                        className="text-muted small mb-3"),
+            ], width=12)
+        ]),
+        
+        # Price filter row
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    dbc.Label("💰 Filter by Price Range:", className="text-muted small me-3"),
+                    dbc.Select(
+                        id="price-range-filter",
+                        options=[
+                            {'label': 'All Prices', 'value': 'all'},
+                            {'label': '$500 - $1000+', 'value': '500-1000'},
+                            {'label': '$100 - $500', 'value': '100-500'},
+                            {'label': '$10 - $100', 'value': '10-100'},
+                            {'label': '$10 or Below', 'value': '0-10'},
+                        ],
+                        value='all',
+                        className="bg-dark text-light border-secondary",
+                        style={'width': '200px', 'display': 'inline-block', 'fontFamily': 'JetBrains Mono'}
+                    ),
+                ], style={'display': 'flex', 'alignItems': 'center'})
             ], width=9),
             dbc.Col([
                 dbc.Button(
                     "🔄 Get Picks",
                     id="refresh-recommendations-btn",
                     color="success",
-                    className="mb-3",
                     style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
                 ),
             ], width=3, className="text-end")
-        ]),
+        ], className="mb-3"),
         
         dcc.Loading(
             id="loading-recommendations",
@@ -3204,30 +3240,63 @@ def create_recommendation_card(stock: dict) -> html.Div:
 @app.callback(
     Output("recommendations-list", "children"),
     [Input("refresh-recommendations-btn", "n_clicks"),
-     Input("recommendations-interval", "n_intervals")],
+     Input("recommendations-interval", "n_intervals"),
+     Input("price-range-filter", "value")],
     prevent_initial_call=False  # Auto-load on page open
 )
-def update_recommendations(n_clicks, n_intervals):
-    """Generate and display buy recommendations"""
+def update_recommendations(n_clicks, n_intervals, price_range):
+    """Generate and display buy recommendations filtered by price range"""
     import sys
     
     def log(msg):
         print(f"[RECO-CB] {msg}")
         sys.stdout.flush()
     
-    log(f"Loading recommendations (n_clicks={n_clicks}, intervals={n_intervals})")
+    log(f"Loading recommendations (n_clicks={n_clicks}, price_range={price_range})")
     
     try:
         log("Generating buy recommendations...")
-        recommendations = generate_buy_recommendations(num_picks=10)
+        recommendations = generate_buy_recommendations(num_picks=20)  # Get more to filter
+        
+        # Apply price filter
+        if price_range and price_range != 'all':
+            if price_range == '500-1000':
+                recommendations = [r for r in recommendations if r['price'] >= 500]
+            elif price_range == '100-500':
+                recommendations = [r for r in recommendations if 100 <= r['price'] < 500]
+            elif price_range == '10-100':
+                recommendations = [r for r in recommendations if 10 <= r['price'] < 100]
+            elif price_range == '0-10':
+                recommendations = [r for r in recommendations if r['price'] < 10]
+        
+        # Limit to top 10 after filtering
+        recommendations = recommendations[:10]
         
         if not recommendations:
+            # Show helpful message based on filter
+            price_msg = {
+                'all': 'any price range',
+                '500-1000': '$500-$1000+',
+                '100-500': '$100-$500',
+                '10-100': '$10-$100',
+                '0-10': '$10 or below'
+            }.get(price_range, 'selected range')
+            
             return html.Div([
-                html.P("📊 Analyzing stocks... No strong buy signals found at this time.", className="text-muted"),
-                html.P("This can happen during market uncertainty. Check back later!", className="text-muted small")
+                html.P(f"📊 No strong buy signals found for stocks in {price_msg}.", className="text-muted"),
+                html.P("Try a different price range or check back later!", className="text-muted small")
             ], style={'padding': '20px', 'textAlign': 'center'})
         
-        log(f"Found {len(recommendations)} recommendations")
+        log(f"Found {len(recommendations)} recommendations after filtering")
+        
+        # Price range label
+        price_label = {
+            'all': 'All Prices',
+            '500-1000': '$500-$1000+',
+            '100-500': '$100-$500',
+            '10-100': '$10-$100',
+            '0-10': '$10 or Below'
+        }.get(price_range, 'All Prices')
         
         # Header
         header = html.Div([
@@ -3237,6 +3306,14 @@ def update_recommendations(n_clicks, n_intervals):
                     'fontFamily': 'JetBrains Mono',
                     'fontSize': '1rem',
                     'fontWeight': '600'
+                }),
+                html.Span(f" • {price_label}", style={
+                    'color': '#ffd93d',
+                    'fontSize': '0.8rem',
+                    'marginLeft': '10px',
+                    'background': 'rgba(255, 217, 61, 0.1)',
+                    'padding': '2px 8px',
+                    'borderRadius': '8px'
                 }),
                 html.Span(f" • Updated {datetime.now().strftime('%H:%M:%S')}", style={
                     'color': '#8888aa',

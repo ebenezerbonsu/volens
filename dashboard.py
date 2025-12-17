@@ -227,6 +227,158 @@ def get_time_ago(timestamp: int) -> str:
     else:
         return "Just now"
 
+
+# ============================================
+# MARKET MOVERS FUNCTIONS
+# ============================================
+
+def fetch_market_movers() -> dict:
+    """
+    Fetch market movers: most active, gainers, losers, 52-week highs/lows, dividends.
+    Returns categorized stock data.
+    """
+    import sys
+    
+    def log(msg):
+        print(f"[MOVERS] {msg}")
+        sys.stdout.flush()
+    
+    # Extended universe for market movers
+    movers_universe = [
+        # Tech
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'INTC', 'CRM',
+        'ORCL', 'ADBE', 'NOW', 'SNOW', 'PLTR', 'UBER', 'ABNB', 'SHOP', 'NET', 'CRWD',
+        # Semiconductors
+        'AVGO', 'QCOM', 'MU', 'AMAT', 'MRVL', 'ARM', 'SMCI', 'KLAC', 'LRCX',
+        # Finance
+        'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'BLK', 'SCHW', 'AXP',
+        'V', 'MA', 'PYPL', 'SQ', 'COIN', 'SOFI',
+        # Healthcare
+        'JNJ', 'UNH', 'PFE', 'LLY', 'ABBV', 'MRK', 'MRNA', 'BMY', 'GILD', 'AMGN',
+        # Energy
+        'XOM', 'CVX', 'COP', 'SLB', 'OXY', 'EOG', 'PSX', 'VLO',
+        # Consumer
+        'WMT', 'COST', 'HD', 'TGT', 'LOW', 'NKE', 'SBUX', 'MCD',
+        # Industrial
+        'CAT', 'DE', 'HON', 'GE', 'BA', 'RTX', 'LMT', 'UPS', 'FDX',
+        # Entertainment
+        'DIS', 'NFLX', 'WBD', 'CMCSA', 'T', 'VZ',
+        # REITs & Dividends
+        'O', 'VICI', 'AMT', 'PLD', 'SPG',
+        # Utilities (typically dividend payers)
+        'NEE', 'DUK', 'SO', 'D', 'AEP',
+        # High volatility
+        'GME', 'AMC', 'MARA', 'RIOT', 'MSTR', 'RIVN', 'LCID', 'NIO',
+        # ETFs
+        'SPY', 'QQQ', 'IWM', 'DIA',
+    ]
+    
+    results = {
+        'most_active': [],
+        'top_gainers': [],
+        'top_losers': [],
+        'week_52_high': [],
+        'week_52_low': [],
+        'dividend_stocks': [],
+        'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M')
+    }
+    
+    all_stocks = []
+    log(f"Scanning {len(movers_universe)} stocks for market movers...")
+    
+    def fetch_stock_data(ticker):
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period='5d')
+            
+            if hist.empty or len(hist) < 2:
+                return None
+            
+            info = stock.info
+            
+            current_price = hist['Close'].iloc[-1]
+            prev_close = hist['Close'].iloc[-2]
+            change_pct = ((current_price - prev_close) / prev_close) * 100
+            
+            volume = hist['Volume'].iloc[-1]
+            avg_volume = hist['Volume'].mean()
+            
+            # Get 52-week data from info
+            week_52_high = info.get('fiftyTwoWeekHigh', 0)
+            week_52_low = info.get('fiftyTwoWeekLow', 0)
+            
+            # Calculate how close to 52-week high/low
+            pct_from_high = ((current_price - week_52_high) / week_52_high * 100) if week_52_high else -999
+            pct_from_low = ((current_price - week_52_low) / week_52_low * 100) if week_52_low else 999
+            
+            # Dividend info
+            dividend_yield = info.get('dividendYield', 0) or 0
+            dividend_rate = info.get('dividendRate', 0) or 0
+            
+            return {
+                'ticker': ticker,
+                'price': current_price,
+                'change_pct': change_pct,
+                'volume': volume,
+                'avg_volume': avg_volume,
+                'dollar_volume': current_price * volume,
+                'week_52_high': week_52_high,
+                'week_52_low': week_52_low,
+                'pct_from_high': pct_from_high,
+                'pct_from_low': pct_from_low,
+                'dividend_yield': dividend_yield * 100 if dividend_yield < 1 else dividend_yield,  # Convert to percentage
+                'dividend_rate': dividend_rate,
+                'name': info.get('shortName', ticker)[:25]
+            }
+        except Exception as e:
+            return None
+    
+    # Parallel fetch
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(fetch_stock_data, ticker): ticker for ticker in movers_universe}
+        
+        completed = 0
+        for future in concurrent.futures.as_completed(futures):
+            completed += 1
+            result = future.result()
+            if result:
+                all_stocks.append(result)
+            
+            if completed % 20 == 0:
+                log(f"Progress: {completed}/{len(movers_universe)}")
+    
+    log(f"Successfully fetched {len(all_stocks)} stocks")
+    
+    if not all_stocks:
+        return results
+    
+    # Sort and categorize
+    
+    # Most Active (by dollar volume)
+    results['most_active'] = sorted(all_stocks, key=lambda x: x['dollar_volume'], reverse=True)[:15]
+    
+    # Top Gainers (positive change %)
+    gainers = [s for s in all_stocks if s['change_pct'] > 0]
+    results['top_gainers'] = sorted(gainers, key=lambda x: x['change_pct'], reverse=True)[:15]
+    
+    # Top Losers (negative change %)
+    losers = [s for s in all_stocks if s['change_pct'] < 0]
+    results['top_losers'] = sorted(losers, key=lambda x: x['change_pct'])[:15]
+    
+    # 52-Week Highs (within 2% of high)
+    near_highs = [s for s in all_stocks if s['pct_from_high'] > -2 and s['week_52_high'] > 0]
+    results['week_52_high'] = sorted(near_highs, key=lambda x: x['pct_from_high'], reverse=True)[:15]
+    
+    # 52-Week Lows (within 5% of low)
+    near_lows = [s for s in all_stocks if s['pct_from_low'] < 5 and s['week_52_low'] > 0]
+    results['week_52_low'] = sorted(near_lows, key=lambda x: x['pct_from_low'])[:15]
+    
+    # Dividend Stocks (yield > 1%)
+    dividend_payers = [s for s in all_stocks if s['dividend_yield'] > 1]
+    results['dividend_stocks'] = sorted(dividend_payers, key=lambda x: x['dividend_yield'], reverse=True)[:15]
+    
+    return results
+
 # Optimized stock universe - Top 80 most liquid stocks for faster scanning
 STOCK_UNIVERSE = [
     # Tech Giants (most liquid)
@@ -1715,6 +1867,112 @@ app.layout = html.Div([
             n_intervals=0
         ),
         
+        # Market Movers Section
+        html.Hr(className="border-secondary my-4"),
+        dbc.Row([
+            dbc.Col([
+                html.H3("🔥 Market Movers", className="mb-2", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #ff6b35 0%, #ff00aa 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("Real-time most active, gainers, losers, 52-week highs/lows, and dividend stocks", 
+                       className="text-muted small mb-3"),
+            ], width=9),
+            dbc.Col([
+                dbc.Button(
+                    "🔄 Refresh Movers",
+                    id="refresh-movers-btn",
+                    color="danger",
+                    className="mb-3",
+                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                ),
+            ], width=3, className="text-end")
+        ]),
+        
+        dcc.Loading(
+            id="loading-movers",
+            type="circle",
+            color="#ff6b35",
+            children=[
+                dbc.Row([
+                    # Most Active
+                    dbc.Col([
+                        html.Div([
+                            html.H5("📊 Most Active", className="mb-2", 
+                                   style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("Highest trading volume today", className="text-muted small mb-2"),
+                            html.Div(id="most-active-list", style={
+                                'maxHeight': '400px', 'overflowY': 'auto'
+                            })
+                        ], className="chart-container mb-3")
+                    ], md=4),
+                    
+                    # Top Gainers
+                    dbc.Col([
+                        html.Div([
+                            html.H5("🚀 Top Gainers", className="mb-2", 
+                                   style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("Biggest price increases today", className="text-muted small mb-2"),
+                            html.Div(id="top-gainers-list", style={
+                                'maxHeight': '400px', 'overflowY': 'auto'
+                            })
+                        ], className="chart-container mb-3")
+                    ], md=4),
+                    
+                    # Top Losers
+                    dbc.Col([
+                        html.Div([
+                            html.H5("📉 Top Losers", className="mb-2", 
+                                   style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("Biggest price decreases today", className="text-muted small mb-2"),
+                            html.Div(id="top-losers-list", style={
+                                'maxHeight': '400px', 'overflowY': 'auto'
+                            })
+                        ], className="chart-container mb-3")
+                    ], md=4),
+                ]),
+                
+                dbc.Row([
+                    # 52-Week Highs
+                    dbc.Col([
+                        html.Div([
+                            html.H5("⬆️ 52-Week Highs", className="mb-2", 
+                                   style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("Near or at yearly highs", className="text-muted small mb-2"),
+                            html.Div(id="week52-high-list", style={
+                                'maxHeight': '400px', 'overflowY': 'auto'
+                            })
+                        ], className="chart-container mb-3")
+                    ], md=4),
+                    
+                    # 52-Week Lows
+                    dbc.Col([
+                        html.Div([
+                            html.H5("⬇️ 52-Week Lows", className="mb-2", 
+                                   style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("Near or at yearly lows", className="text-muted small mb-2"),
+                            html.Div(id="week52-low-list", style={
+                                'maxHeight': '400px', 'overflowY': 'auto'
+                            })
+                        ], className="chart-container mb-3")
+                    ], md=4),
+                    
+                    # Dividend Stocks
+                    dbc.Col([
+                        html.Div([
+                            html.H5("💰 Top Dividends", className="mb-2", 
+                                   style={'color': '#ffd93d', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("Highest dividend yields", className="text-muted small mb-2"),
+                            html.Div(id="dividend-list", style={
+                                'maxHeight': '400px', 'overflowY': 'auto'
+                            })
+                        ], className="chart-container mb-3")
+                    ], md=4),
+                ]),
+            ]
+        ),
+        
         # Disclaimer
         dbc.Row([
             dbc.Col([
@@ -2426,6 +2684,150 @@ def filter_news(all_clicks, ma_clicks, reg_clicks, earn_clicks, analyst_clicks, 
     ], style={'marginBottom': '15px'})
     
     return html.Div([header] + news_cards)
+
+
+def create_mover_card(stock: dict, card_type: str) -> html.Div:
+    """Create a styled card for market mover stock"""
+    
+    # Color scheme based on card type
+    colors = {
+        'active': {'accent': '#00d4ff', 'bg': 'rgba(0, 212, 255, 0.1)'},
+        'gainer': {'accent': '#00ff88', 'bg': 'rgba(0, 255, 136, 0.1)'},
+        'loser': {'accent': '#ff6b35', 'bg': 'rgba(255, 107, 53, 0.1)'},
+        'high': {'accent': '#00ff88', 'bg': 'rgba(0, 255, 136, 0.1)'},
+        'low': {'accent': '#ff6b35', 'bg': 'rgba(255, 107, 53, 0.1)'},
+        'dividend': {'accent': '#ffd93d', 'bg': 'rgba(255, 217, 61, 0.1)'}
+    }
+    
+    color = colors.get(card_type, colors['active'])
+    change_color = '#00ff88' if stock['change_pct'] >= 0 else '#ff6b35'
+    
+    # Build content based on card type
+    if card_type == 'active':
+        # Show volume info
+        vol_str = f"{stock['volume']/1e6:.1f}M" if stock['volume'] >= 1e6 else f"{stock['volume']/1e3:.0f}K"
+        detail = html.Span(f"Vol: {vol_str}", style={'color': '#8888aa', 'fontSize': '0.75rem'})
+    elif card_type in ['gainer', 'loser']:
+        # Show change %
+        detail = html.Span(f"{stock['change_pct']:+.2f}%", style={
+            'color': change_color, 'fontSize': '0.85rem', 'fontWeight': '600'
+        })
+    elif card_type == 'high':
+        # Show % from high
+        detail = html.Span(f"52W High: ${stock['week_52_high']:.2f}", style={
+            'color': '#8888aa', 'fontSize': '0.75rem'
+        })
+    elif card_type == 'low':
+        # Show % from low
+        detail = html.Span(f"52W Low: ${stock['week_52_low']:.2f}", style={
+            'color': '#8888aa', 'fontSize': '0.75rem'
+        })
+    elif card_type == 'dividend':
+        # Show dividend yield
+        detail = html.Span(f"Yield: {stock['dividend_yield']:.2f}%", style={
+            'color': '#ffd93d', 'fontSize': '0.85rem', 'fontWeight': '600'
+        })
+    else:
+        detail = None
+    
+    return html.Div([
+        html.Div([
+            html.Span(stock['ticker'], style={
+                'fontFamily': 'JetBrains Mono',
+                'fontWeight': '700',
+                'fontSize': '1rem',
+                'color': color['accent']
+            }),
+            html.Span(f"${stock['price']:.2f}", style={
+                'fontFamily': 'JetBrains Mono',
+                'fontSize': '0.9rem',
+                'color': '#ffffff',
+                'marginLeft': 'auto'
+            }),
+        ], style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '4px'}),
+        html.Div([
+            html.Span(stock.get('name', '')[:20], style={
+                'color': '#666688',
+                'fontSize': '0.7rem',
+                'marginRight': '10px'
+            }),
+            detail
+        ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center'}),
+    ], style={
+        'background': color['bg'],
+        'borderLeft': f"3px solid {color['accent']}",
+        'padding': '8px 12px',
+        'marginBottom': '6px',
+        'borderRadius': '0 8px 8px 0'
+    })
+
+
+@app.callback(
+    [Output("most-active-list", "children"),
+     Output("top-gainers-list", "children"),
+     Output("top-losers-list", "children"),
+     Output("week52-high-list", "children"),
+     Output("week52-low-list", "children"),
+     Output("dividend-list", "children")],
+    [Input("refresh-movers-btn", "n_clicks")],
+    prevent_initial_call=True
+)
+def update_market_movers(n_clicks):
+    """Fetch and display market movers"""
+    import sys
+    
+    def log(msg):
+        print(f"[MOVERS-CB] {msg}")
+        sys.stdout.flush()
+    
+    log(f"Refresh clicked, n_clicks={n_clicks}")
+    
+    if not n_clicks:
+        placeholder = html.P("Click 'Refresh Movers' to load data", className="text-muted small")
+        return [placeholder] * 6
+    
+    try:
+        log("Fetching market movers...")
+        data = fetch_market_movers()
+        
+        log(f"Found: active={len(data['most_active'])}, gainers={len(data['top_gainers'])}, losers={len(data['top_losers'])}")
+        
+        # Create cards for each category
+        def make_list(stocks, card_type, empty_msg):
+            if not stocks:
+                return html.P(empty_msg, className="text-muted small")
+            
+            header = html.Div([
+                html.Span(f"{len(stocks)} stocks", style={
+                    'color': '#00d4ff',
+                    'fontFamily': 'JetBrains Mono',
+                    'fontSize': '0.75rem'
+                }),
+                html.Span(f" • {data['last_updated']}", style={
+                    'color': '#8888aa',
+                    'fontSize': '0.7rem'
+                })
+            ], style={'marginBottom': '8px'})
+            
+            cards = [create_mover_card(s, card_type) for s in stocks]
+            return html.Div([header] + cards)
+        
+        most_active = make_list(data['most_active'], 'active', "No active stocks found")
+        top_gainers = make_list(data['top_gainers'], 'gainer', "No gainers today")
+        top_losers = make_list(data['top_losers'], 'loser', "No losers today")
+        week52_high = make_list(data['week_52_high'], 'high', "No stocks near 52-week highs")
+        week52_low = make_list(data['week_52_low'], 'low', "No stocks near 52-week lows")
+        dividend = make_list(data['dividend_stocks'], 'dividend', "No dividend stocks found")
+        
+        log("Returning market movers to UI")
+        return most_active, top_gainers, top_losers, week52_high, week52_low, dividend
+        
+    except Exception as e:
+        import traceback
+        log(f"Error: {e}")
+        log(traceback.format_exc())
+        error_msg = html.P(f"Error loading: {str(e)[:50]}", className="text-danger small")
+        return [error_msg] * 6
 
 
 # Run the app

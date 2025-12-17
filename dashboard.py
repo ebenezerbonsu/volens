@@ -1973,6 +1973,13 @@ app.layout = html.Div([
             ]
         ),
         
+        # Auto-refresh interval for market movers (every 5 minutes)
+        dcc.Interval(
+            id='movers-interval',
+            interval=5*60*1000,  # 5 minutes in milliseconds
+            n_intervals=0
+        ),
+        
         # Disclaimer
         dbc.Row([
             dbc.Col([
@@ -2562,7 +2569,7 @@ def create_news_card(news_item: dict) -> html.Div:
      Output("news-store", "data")],
     [Input("refresh-news-btn", "n_clicks"),
      Input("news-interval", "n_intervals")],
-    prevent_initial_call=False
+    prevent_initial_call=False  # Auto-load on page open
 )
 def update_news(n_clicks, n_intervals):
     """Fetch and display latest news"""
@@ -2769,10 +2776,11 @@ def create_mover_card(stock: dict, card_type: str) -> html.Div:
      Output("week52-high-list", "children"),
      Output("week52-low-list", "children"),
      Output("dividend-list", "children")],
-    [Input("refresh-movers-btn", "n_clicks")],
-    prevent_initial_call=True
+    [Input("refresh-movers-btn", "n_clicks"),
+     Input("movers-interval", "n_intervals")],
+    prevent_initial_call=False  # Auto-load on page open
 )
-def update_market_movers(n_clicks):
+def update_market_movers(n_clicks, n_intervals):
     """Fetch and display market movers"""
     import sys
     
@@ -2780,11 +2788,7 @@ def update_market_movers(n_clicks):
         print(f"[MOVERS-CB] {msg}")
         sys.stdout.flush()
     
-    log(f"Refresh clicked, n_clicks={n_clicks}")
-    
-    if not n_clicks:
-        placeholder = html.P("Click 'Refresh Movers' to load data", className="text-muted small")
-        return [placeholder] * 6
+    log(f"Loading market movers (n_clicks={n_clicks})")
     
     try:
         log("Fetching market movers...")

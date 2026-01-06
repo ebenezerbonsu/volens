@@ -12,7 +12,6 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import yfinance as yf
 
 from volatility_engine import VolatilityEngine, get_volatility_interpretation
 from prediction_models import VolatilityPredictor
@@ -20,625 +19,75 @@ import concurrent.futures
 import warnings
 warnings.filterwarnings('ignore')
 
-
-# ============================================
-# NEWS FETCHING FUNCTIONS
-# ============================================
-
-def fetch_stock_news(tickers: list = None, max_news: int = 50) -> list:
-    """
-    Fetch latest stock news from ALL major stocks across sectors.
-    Returns list of news items sorted by publish time.
-    """
-    import sys
-    
-    def log(msg):
-        print(f"[NEWS] {msg}")
-        sys.stdout.flush()
-    
-    if tickers is None:
-        # Comprehensive list of stocks across ALL sectors for broad market news
-        tickers = [
-            # Tech Giants
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'ORCL', 'CRM', 'ADBE',
-            # Semiconductors
-            'AMD', 'INTC', 'AVGO', 'QCOM', 'MU', 'AMAT', 'ARM', 'SMCI',
-            # Finance & Banks
-            'JPM', 'GS', 'BAC', 'MS', 'WFC', 'C', 'BLK', 'SCHW',
-            # Fintech & Payments
-            'V', 'MA', 'PYPL', 'SQ', 'COIN', 'SOFI',
-            # Healthcare & Pharma
-            'JNJ', 'UNH', 'PFE', 'LLY', 'ABBV', 'MRK', 'MRNA', 'BMY', 'GILD',
-            # Biotech
-            'AMGN', 'BIIB', 'REGN', 'VRTX', 'ISRG',
-            # Energy
-            'XOM', 'CVX', 'COP', 'SLB', 'OXY', 'EOG',
-            # Clean Energy & EV
-            'ENPH', 'FSLR', 'RIVN', 'LCID', 'NIO',
-            # Aerospace & Defense
-            'BA', 'RTX', 'LMT', 'NOC', 'GD',
-            # Industrial
-            'CAT', 'DE', 'HON', 'GE', 'MMM', 'UPS', 'FDX',
-            # Consumer & Retail
-            'WMT', 'COST', 'HD', 'TGT', 'LOW', 'AMZN',
-            # Food & Beverage
-            'KO', 'PEP', 'MCD', 'SBUX', 'NKE',
-            # Entertainment & Media
-            'DIS', 'NFLX', 'WBD', 'PARA', 'CMCSA',
-            # Social Media & Internet
-            'SNAP', 'PINS', 'UBER', 'LYFT', 'ABNB', 'DASH',
-            # Telecom
-            'T', 'VZ', 'TMUS',
-            # Real Estate
-            'AMT', 'PLD', 'EQIX',
-            # Crypto-related
-            'MARA', 'RIOT', 'MSTR',
-            # ETFs for broad market news
-            'SPY', 'QQQ', 'DIA', 'IWM', 'VTI',
-        ]
-    
-    all_news = []
-    seen_titles = set()  # Avoid duplicates
-    
-    log(f"Fetching news from {len(tickers)} tickers...")
-    
-    for ticker in tickers[:40]:  # Scan 40 stocks for comprehensive coverage
-        try:
-            stock = yf.Ticker(ticker)
-            news = stock.news
-            
-            if news:
-                for item in news[:5]:  # Top 5 news per ticker
-                    # Handle new yfinance structure where data is nested under 'content'
-                    content = item.get('content', item)  # Fallback to item if no content key
-                    
-                    title = content.get('title', '')
-                    
-                    # Skip if empty title or we've seen this title (dedupe)
-                    if not title or title in seen_titles:
-                        continue
-                    seen_titles.add(title)
-                    
-                    # Parse publisher - handle nested structure
-                    publisher = 'Unknown'
-                    if 'provider' in content:
-                        publisher = content['provider'].get('displayName', 'Unknown')
-                    elif 'publisher' in content:
-                        publisher = content['publisher']
-                    
-                    # Parse link - handle nested structure
-                    link = '#'
-                    if 'canonicalUrl' in content:
-                        link = content['canonicalUrl'].get('url', '#')
-                    elif 'clickThroughUrl' in content:
-                        link = content['clickThroughUrl'].get('url', '#')
-                    elif 'link' in content:
-                        link = content['link']
-                    
-                    # Parse publish time - handle both formats
-                    published = 0
-                    if 'pubDate' in content:
-                        # Convert ISO format to timestamp
-                        try:
-                            from datetime import datetime
-                            pub_date = content['pubDate'].replace('Z', '+00:00')
-                            dt = datetime.fromisoformat(pub_date)
-                            published = int(dt.timestamp())
-                        except:
-                            published = 0
-                    elif 'providerPublishTime' in content:
-                        published = content['providerPublishTime']
-                    
-                    # Parse thumbnail
-                    thumbnail = ''
-                    if 'thumbnail' in content and content['thumbnail']:
-                        resolutions = content['thumbnail'].get('resolutions', [])
-                        if resolutions:
-                            thumbnail = resolutions[0].get('url', '')
-                    
-                    # Parse the news item
-                    news_item = {
-                        'title': title,
-                        'publisher': publisher,
-                        'link': link,
-                        'published': published,
-                        'ticker': ticker,
-                        'type': content.get('contentType', 'STORY'),
-                        'thumbnail': thumbnail,
-                        'related_tickers': [ticker]  # yfinance doesn't provide related tickers in new format
-                    }
-                    
-                    # Categorize news based on keywords
-                    news_item['category'] = categorize_news(title)
-                    
-                    all_news.append(news_item)
-                    
-        except Exception as e:
-            log(f"Error fetching news for {ticker}: {e}")
-            continue
-    
-    # Sort by publish time (newest first)
-    all_news.sort(key=lambda x: x['published'], reverse=True)
-    
-    log(f"Found {len(all_news)} unique news items")
-    
-    return all_news[:max_news]
-
-
-def categorize_news(title: str) -> str:
-    """Categorize news based on title keywords"""
-    title_lower = title.lower()
-    
-    # Mergers & Acquisitions
-    if any(word in title_lower for word in ['merger', 'acquire', 'acquisition', 'buyout', 'takeover', 'deal', 'bid']):
-        return '🤝 M&A'
-    
-    # IPO & Listings
-    if any(word in title_lower for word in ['ipo', 'public offering', 'listing', 'debut', 'goes public']):
-        return '🎉 IPO'
-    
-    # Government & Regulatory
-    if any(word in title_lower for word in ['fda', 'sec', 'federal', 'regulation', 'approval', 'approved', 'antitrust', 'investigation', 'lawsuit', 'congress', 'government', 'ban', 'fine', 'penalty']):
-        return '🏛️ Regulatory'
-    
-    # Earnings & Financials
-    if any(word in title_lower for word in ['earnings', 'revenue', 'profit', 'loss', 'quarter', 'q1', 'q2', 'q3', 'q4', 'beat', 'miss', 'guidance', 'forecast']):
-        return '📊 Earnings'
-    
-    # Analyst & Ratings
-    if any(word in title_lower for word in ['upgrade', 'downgrade', 'rating', 'analyst', 'price target', 'buy rating', 'sell rating', 'outperform', 'underperform']):
-        return '📈 Analyst'
-    
-    # Leadership & Management
-    if any(word in title_lower for word in ['ceo', 'cfo', 'executive', 'resign', 'appoint', 'hire', 'fire', 'layoff', 'job cut', 'workforce']):
-        return '👔 Leadership'
-    
-    # Products & Innovation
-    if any(word in title_lower for word in ['launch', 'product', 'release', 'unveil', 'announce', 'innovation', 'patent', 'breakthrough', 'ai', 'technology']):
-        return '🚀 Product'
-    
-    # Market Movement
-    if any(word in title_lower for word in ['surge', 'plunge', 'soar', 'crash', 'rally', 'drop', 'spike', 'jump', 'fall', 'rise', 'gain', 'lose']):
-        return '📉 Market'
-    
-    # Dividends & Buybacks
-    if any(word in title_lower for word in ['dividend', 'buyback', 'repurchase', 'payout', 'shareholder']):
-        return '💰 Dividend'
-    
-    # Default
-    return '📰 News'
-
-
-def get_time_ago(timestamp: int) -> str:
-    """Convert Unix timestamp to human-readable time ago"""
-    if not timestamp:
-        return "Recently"
-    
-    now = datetime.now()
-    published = datetime.fromtimestamp(timestamp)
-    diff = now - published
-    
-    if diff.days > 0:
-        return f"{diff.days}d ago"
-    elif diff.seconds > 3600:
-        return f"{diff.seconds // 3600}h ago"
-    elif diff.seconds > 60:
-        return f"{diff.seconds // 60}m ago"
-    else:
-        return "Just now"
-
-
-# ============================================
-# MARKET MOVERS FUNCTIONS
-# ============================================
-
-def generate_buy_recommendations(num_picks: int = 10) -> list:
-    """
-    Generate daily stock buy recommendations with detailed reasoning.
-    Analyzes technical indicators, momentum, volatility, and fundamentals.
-    """
-    import sys
-    
-    def log(msg):
-        print(f"[RECOMMEND] {msg}")
-        sys.stdout.flush()
-    
-    # Stocks to analyze for recommendations - diverse price ranges
-    recommendation_universe = [
-        # Premium ($500+)
-        'AVGO', 'META', 'NFLX', 'COST', 'LLY', 'ISRG', 'MSTR', 'BLK', 'ORLY', 'CMG',
-        
-        # High-priced ($100-$500)
-        'NVDA', 'AMD', 'SMCI', 'ARM', 'PLTR', 'CRWD', 'NET', 'DDOG', 'SNOW',
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'CRM', 'ORCL', 'ADBE',
-        'JPM', 'GS', 'V', 'MA', 'COIN',
-        'UNH', 'ABBV', 'MRK', 'MRNA',
-        'WMT', 'HD', 'NKE', 'SBUX', 'MCD',
-        'CAT', 'GE', 'HON', 'BA', 'RTX',
-        'XOM', 'CVX', 'COP', 'SLB',
-        'ENPH', 'FSLR', 'NEE',
-        'DIS', 'SPOT', 'UBER', 'ABNB',
-        
-        # Mid-priced ($10-$100)
-        'INTC', 'MU', 'QCOM', 'MRVL', 'ON',
-        'BAC', 'C', 'WFC', 'SCHW', 'SOFI', 'HOOD',
-        'PFE', 'BMY', 'GILD', 'TEVA',
-        'T', 'VZ', 'TMUS',
-        'F', 'GM', 'RIVN', 'LCID', 'NIO',
-        'SNAP', 'PINS', 'RBLX',
-        'VALE', 'CLF', 'X', 'AA',
-        'CCL', 'RCL', 'DAL', 'UAL', 'AAL',
-        'DKNG', 'PENN',
-        
-        # Lower-priced ($10 and below)
-        'MARA', 'RIOT', 'BITF', 'HUT',
-        'AMC', 'GME',
-        'SIRI', 'WBD',
-        'PLUG', 'FCEL', 'BE',
-        'DNA', 'GEVO', 'NKLA',
-        'BB', 'NOK', 'ERIC',
-        'GRAB', 'PATH',
-        'OPEN', 'WISH', 'CLOV',
-        'TLRY', 'CGC', 'ACB',
-    ]
-    
-    candidates = []
-    log(f"Analyzing {len(recommendation_universe)} stocks for buy recommendations...")
-    
-    def analyze_for_recommendation(ticker):
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(period='3mo')
-            
-            if hist.empty or len(hist) < 20:
-                return None
-            
-            info = stock.info
-            
-            current_price = hist['Close'].iloc[-1]
-            
-            # Calculate key metrics
-            # 1. Price momentum (5-day, 20-day, 60-day returns)
-            ret_5d = (hist['Close'].iloc[-1] / hist['Close'].iloc[-5] - 1) * 100 if len(hist) >= 5 else 0
-            ret_20d = (hist['Close'].iloc[-1] / hist['Close'].iloc[-20] - 1) * 100 if len(hist) >= 20 else 0
-            ret_60d = (hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100
-            
-            # 2. Volatility
-            returns = hist['Close'].pct_change().dropna()
-            volatility = returns.std() * np.sqrt(252) * 100  # Annualized %
-            
-            # 3. Volume trend
-            avg_volume_recent = hist['Volume'].tail(5).mean()
-            avg_volume_older = hist['Volume'].tail(20).mean()
-            volume_surge = (avg_volume_recent / avg_volume_older - 1) * 100 if avg_volume_older > 0 else 0
-            
-            # 4. 52-week position
-            week_52_high = info.get('fiftyTwoWeekHigh', current_price)
-            week_52_low = info.get('fiftyTwoWeekLow', current_price)
-            pct_from_high = ((current_price - week_52_high) / week_52_high * 100) if week_52_high else 0
-            pct_from_low = ((current_price - week_52_low) / week_52_low * 100) if week_52_low else 0
-            
-            # 5. Moving averages
-            ma_20 = hist['Close'].tail(20).mean()
-            ma_50 = hist['Close'].tail(50).mean() if len(hist) >= 50 else ma_20
-            above_ma_20 = current_price > ma_20
-            above_ma_50 = current_price > ma_50
-            
-            # 6. RSI (simplified)
-            gains = returns[returns > 0].mean() if len(returns[returns > 0]) > 0 else 0
-            losses = abs(returns[returns < 0].mean()) if len(returns[returns < 0]) > 0 else 0.001
-            rs = gains / losses
-            rsi = 100 - (100 / (1 + rs))
-            
-            # 7. Fundamentals
-            pe_ratio = info.get('trailingPE', 0) or 0
-            market_cap = info.get('marketCap', 0) or 0
-            revenue_growth = info.get('revenueGrowth', 0) or 0
-            
-            # Calculate buy score (0-100)
-            score = 50  # Base score
-            reasons = []
-            
-            # Momentum scoring
-            if ret_5d > 3:
-                score += 10
-                reasons.append(f"Strong 5-day momentum (+{ret_5d:.1f}%)")
-            elif ret_5d > 0:
-                score += 5
-                reasons.append(f"Positive short-term trend (+{ret_5d:.1f}%)")
-            
-            if ret_20d > 10:
-                score += 15
-                reasons.append(f"Excellent monthly performance (+{ret_20d:.1f}%)")
-            elif ret_20d > 5:
-                score += 10
-                reasons.append(f"Solid 20-day gains (+{ret_20d:.1f}%)")
-            elif ret_20d < -10:
-                score -= 10
-                reasons.append(f"Potential bounce play (down {ret_20d:.1f}%)")
-            
-            # Trend scoring
-            if above_ma_20 and above_ma_50:
-                score += 15
-                reasons.append("Trading above 20 & 50-day moving averages (bullish trend)")
-            elif above_ma_20:
-                score += 8
-                reasons.append("Above 20-day moving average")
-            
-            # Volume analysis
-            if volume_surge > 50:
-                score += 10
-                reasons.append(f"High volume surge (+{volume_surge:.0f}% above average) signals strong interest")
-            elif volume_surge > 20:
-                score += 5
-                reasons.append("Increasing trading volume")
-            
-            # RSI analysis
-            if 30 < rsi < 50:
-                score += 10
-                reasons.append(f"RSI at {rsi:.0f} - potential oversold bounce opportunity")
-            elif 50 < rsi < 70:
-                score += 5
-                reasons.append(f"RSI at {rsi:.0f} - healthy momentum")
-            elif rsi < 30:
-                score += 8
-                reasons.append(f"RSI at {rsi:.0f} - oversold, potential reversal candidate")
-            
-            # 52-week analysis
-            if pct_from_high > -5:
-                score += 10
-                reasons.append(f"Near 52-week high ({pct_from_high:+.1f}%) - breakout potential")
-            elif pct_from_low < 15:
-                score += 8
-                reasons.append(f"Near 52-week low - potential value entry point")
-            
-            # Volatility (prefer moderate volatility for swing trades)
-            if 20 < volatility < 50:
-                score += 5
-                reasons.append(f"Moderate volatility ({volatility:.0f}%) offers good risk/reward")
-            elif volatility > 60:
-                reasons.append(f"⚠️ High volatility ({volatility:.0f}%) - higher risk/reward")
-            
-            # Fundamentals
-            if revenue_growth and revenue_growth > 0.15:
-                score += 10
-                reasons.append(f"Strong revenue growth ({revenue_growth*100:.0f}% YoY)")
-            
-            if 10 < pe_ratio < 30:
-                score += 5
-                reasons.append(f"Reasonable P/E ratio ({pe_ratio:.1f})")
-            elif pe_ratio > 50:
-                reasons.append(f"High P/E ({pe_ratio:.0f}) - priced for growth")
-            
-            # Market cap preference (larger = more stable)
-            if market_cap > 100e9:
-                score += 5
-                reasons.append("Large-cap stability")
-            elif market_cap > 10e9:
-                score += 3
-            
-            return {
-                'ticker': ticker,
-                'price': current_price,
-                'score': min(score, 100),
-                'ret_5d': ret_5d,
-                'ret_20d': ret_20d,
-                'volatility': volatility,
-                'rsi': rsi,
-                'volume_surge': volume_surge,
-                'pct_from_high': pct_from_high,
-                'reasons': reasons[:5],  # Top 5 reasons
-                'name': info.get('shortName', ticker)[:30],
-                'sector': info.get('sector', 'Unknown'),
-                'signal': 'STRONG BUY' if score >= 80 else 'BUY' if score >= 65 else 'WATCH'
-            }
-        except Exception as e:
-            return None
-    
-    # Parallel analysis
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(analyze_for_recommendation, ticker): ticker 
-                   for ticker in recommendation_universe}
-        
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            if result and result['score'] >= 55:  # Only include decent candidates
-                candidates.append(result)
-    
-    log(f"Found {len(candidates)} buy candidates")
-    
-    # Sort by score and return top picks
-    candidates.sort(key=lambda x: x['score'], reverse=True)
-    
-    return candidates[:num_picks]
-
-
-def fetch_market_movers() -> dict:
-    """
-    Fetch market movers: most active, gainers, losers, 52-week highs/lows, dividends.
-    Returns categorized stock data.
-    """
-    import sys
-    
-    def log(msg):
-        print(f"[MOVERS] {msg}")
-        sys.stdout.flush()
-    
-    # Extended universe for market movers
-    movers_universe = [
-        # Tech
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'INTC', 'CRM',
-        'ORCL', 'ADBE', 'NOW', 'SNOW', 'PLTR', 'UBER', 'ABNB', 'SHOP', 'NET', 'CRWD',
-        # Semiconductors
-        'AVGO', 'QCOM', 'MU', 'AMAT', 'MRVL', 'ARM', 'SMCI', 'KLAC', 'LRCX',
-        # Finance
-        'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'BLK', 'SCHW', 'AXP',
-        'V', 'MA', 'PYPL', 'SQ', 'COIN', 'SOFI',
-        # Healthcare
-        'JNJ', 'UNH', 'PFE', 'LLY', 'ABBV', 'MRK', 'MRNA', 'BMY', 'GILD', 'AMGN',
-        # Energy
-        'XOM', 'CVX', 'COP', 'SLB', 'OXY', 'EOG', 'PSX', 'VLO',
-        # Consumer
-        'WMT', 'COST', 'HD', 'TGT', 'LOW', 'NKE', 'SBUX', 'MCD',
-        # Industrial
-        'CAT', 'DE', 'HON', 'GE', 'BA', 'RTX', 'LMT', 'UPS', 'FDX',
-        # Entertainment
-        'DIS', 'NFLX', 'WBD', 'CMCSA', 'T', 'VZ',
-        # REITs & Dividends
-        'O', 'VICI', 'AMT', 'PLD', 'SPG',
-        # Utilities (typically dividend payers)
-        'NEE', 'DUK', 'SO', 'D', 'AEP',
-        # High volatility
-        'GME', 'AMC', 'MARA', 'RIOT', 'MSTR', 'RIVN', 'LCID', 'NIO',
-        # ETFs
-        'SPY', 'QQQ', 'IWM', 'DIA',
-    ]
-    
-    results = {
-        'most_active': [],
-        'top_gainers': [],
-        'top_losers': [],
-        'week_52_high': [],
-        'week_52_low': [],
-        'dividend_stocks': [],
-        'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M')
-    }
-    
-    all_stocks = []
-    log(f"Scanning {len(movers_universe)} stocks for market movers...")
-    
-    def fetch_stock_data(ticker):
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(period='5d')
-            
-            if hist.empty or len(hist) < 2:
-                return None
-            
-            info = stock.info
-            
-            current_price = hist['Close'].iloc[-1]
-            prev_close = hist['Close'].iloc[-2]
-            change_pct = ((current_price - prev_close) / prev_close) * 100
-            
-            volume = hist['Volume'].iloc[-1]
-            avg_volume = hist['Volume'].mean()
-            
-            # Get 52-week data from info
-            week_52_high = info.get('fiftyTwoWeekHigh', 0)
-            week_52_low = info.get('fiftyTwoWeekLow', 0)
-            
-            # Calculate how close to 52-week high/low
-            pct_from_high = ((current_price - week_52_high) / week_52_high * 100) if week_52_high else -999
-            pct_from_low = ((current_price - week_52_low) / week_52_low * 100) if week_52_low else 999
-            
-            # Dividend info
-            dividend_yield = info.get('dividendYield', 0) or 0
-            dividend_rate = info.get('dividendRate', 0) or 0
-            
-            return {
-                'ticker': ticker,
-                'price': current_price,
-                'change_pct': change_pct,
-                'volume': volume,
-                'avg_volume': avg_volume,
-                'dollar_volume': current_price * volume,
-                'week_52_high': week_52_high,
-                'week_52_low': week_52_low,
-                'pct_from_high': pct_from_high,
-                'pct_from_low': pct_from_low,
-                'dividend_yield': dividend_yield * 100 if dividend_yield < 1 else dividend_yield,  # Convert to percentage
-                'dividend_rate': dividend_rate,
-                'name': info.get('shortName', ticker)[:25]
-            }
-        except Exception as e:
-            return None
-    
-    # Parallel fetch
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(fetch_stock_data, ticker): ticker for ticker in movers_universe}
-        
-        completed = 0
-        for future in concurrent.futures.as_completed(futures):
-            completed += 1
-            result = future.result()
-            if result:
-                all_stocks.append(result)
-            
-            if completed % 20 == 0:
-                log(f"Progress: {completed}/{len(movers_universe)}")
-    
-    log(f"Successfully fetched {len(all_stocks)} stocks")
-    
-    if not all_stocks:
-        return results
-    
-    # Sort and categorize
-    
-    # Most Active (by dollar volume)
-    results['most_active'] = sorted(all_stocks, key=lambda x: x['dollar_volume'], reverse=True)[:15]
-    
-    # Top Gainers (positive change %)
-    gainers = [s for s in all_stocks if s['change_pct'] > 0]
-    results['top_gainers'] = sorted(gainers, key=lambda x: x['change_pct'], reverse=True)[:15]
-    
-    # Top Losers (negative change %)
-    losers = [s for s in all_stocks if s['change_pct'] < 0]
-    results['top_losers'] = sorted(losers, key=lambda x: x['change_pct'])[:15]
-    
-    # 52-Week Highs (within 2% of high)
-    near_highs = [s for s in all_stocks if s['pct_from_high'] > -2 and s['week_52_high'] > 0]
-    results['week_52_high'] = sorted(near_highs, key=lambda x: x['pct_from_high'], reverse=True)[:15]
-    
-    # 52-Week Lows (within 5% of low)
-    near_lows = [s for s in all_stocks if s['pct_from_low'] < 5 and s['week_52_low'] > 0]
-    results['week_52_low'] = sorted(near_lows, key=lambda x: x['pct_from_low'])[:15]
-    
-    # Dividend Stocks (yield > 1%)
-    dividend_payers = [s for s in all_stocks if s['dividend_yield'] > 1]
-    results['dividend_stocks'] = sorted(dividend_payers, key=lambda x: x['dividend_yield'], reverse=True)[:15]
-    
-    return results
-
-# Optimized stock universe - Top 80 most liquid stocks for faster scanning
+# Extended stock universe for comprehensive scanning (150+ stocks)
 STOCK_UNIVERSE = [
-    # Tech Giants (most liquid)
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'INTC',
-    'CRM', 'ORCL', 'ADBE', 'PLTR', 'UBER', 'ABNB', 'SHOP', 'CRWD', 'NET', 'DDOG',
+    # Tech Giants & Software
+    'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'INTC',
+    'CRM', 'ORCL', 'ADBE', 'NOW', 'SNOW', 'PLTR', 'UBER', 'LYFT', 'DASH', 'ABNB',
+    'SQ', 'SHOP', 'TWLO', 'ZM', 'DOCU', 'OKTA', 'CRWD', 'ZS', 'NET', 'DDOG',
+    'MDB', 'ESTC', 'PATH', 'U', 'RBLX', 'TTWO', 'EA', 'ATVI',
     
     # Semiconductors
-    'AVGO', 'QCOM', 'MU', 'AMAT', 'MRVL', 'ARM', 'SMCI',
+    'AVGO', 'QCOM', 'TXN', 'MU', 'LRCX', 'AMAT', 'KLAC', 'MRVL', 'ON', 'SWKS',
+    'MCHP', 'ADI', 'NXPI', 'MPWR', 'ENTG', 'ARM', 'SMCI',
     
-    # Finance & Fintech
-    'JPM', 'BAC', 'GS', 'MS', 'WFC', 'BLK', 'COIN', 'SOFI',
-    'V', 'MA', 'PYPL', 'AXP',
+    # Finance & Banking
+    'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'USB', 'PNC', 'TFC', 'SCHW',
+    'BLK', 'BX', 'KKR', 'APO', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST',
+    
+    # Payments & Fintech
+    'V', 'MA', 'PYPL', 'AXP', 'COF', 'DFS', 'SYF',
     
     # Healthcare & Biotech
-    'JNJ', 'UNH', 'PFE', 'ABBV', 'MRK', 'LLY', 'MRNA', 'ISRG',
+    'JNJ', 'UNH', 'PFE', 'ABBV', 'MRK', 'LLY', 'TMO', 'ABT', 'DHR', 'BMY',
+    'AMGN', 'GILD', 'VRTX', 'REGN', 'BIIB', 'MRNA', 'BNTX', 'ISRG', 'MDT', 'SYK',
     
     # Consumer & Retail
-    'WMT', 'COST', 'HD', 'NKE', 'SBUX', 'MCD', 'KO', 'PEP',
+    'WMT', 'COST', 'TGT', 'HD', 'LOW', 'TJX', 'ROST', 'DG', 'DLTR',
+    'NKE', 'LULU', 'GPS', 'ANF', 'DECK',
+    'SBUX', 'MCD', 'CMG', 'DPZ', 'YUM', 'QSR',
+    'KO', 'PEP', 'MNST', 'KDP',
+    
+    # E-commerce & Internet
+    'BABA', 'JD', 'PDD', 'BIDU', 'NTES', 'SE', 'MELI', 'ETSY', 'W', 'CHWY',
     
     # Streaming & Entertainment
-    'NFLX', 'DIS', 'SPOT',
+    'NFLX', 'DIS', 'WBD', 'PARA', 'SPOT', 'LYV', 'MSGS',
     
-    # Social Media
-    'SNAP', 'PINS', 'TTD',
+    # Social Media & Advertising
+    'SNAP', 'PINS', 'TWTR', 'TTD', 'MGNI', 'PUBM',
     
     # Energy
-    'XOM', 'CVX', 'COP', 'OXY', 'SLB',
+    'XOM', 'CVX', 'COP', 'OXY', 'SLB', 'HAL', 'EOG', 'PXD', 'DVN', 'FANG',
+    'MPC', 'VLO', 'PSX',
     
     # Clean Energy & EV
-    'ENPH', 'FSLR', 'RIVN', 'NIO', 'LCID',
+    'ENPH', 'SEDG', 'FSLR', 'RUN', 'PLUG', 'BE', 'CHPT', 'LCID', 'RIVN', 'NIO',
+    'XPEV', 'LI', 'FSR',
     
     # Industrial & Aerospace
-    'CAT', 'BA', 'RTX', 'GE', 'HON',
+    'CAT', 'DE', 'BA', 'RTX', 'LMT', 'NOC', 'GD', 'GE', 'HON', 'MMM',
+    'EMR', 'ETN', 'ROK', 'CMI', 'PCAR', 'URI',
     
-    # ETFs
-    'SPY', 'QQQ', 'IWM', 'ARKK', 'SOXL', 'TQQQ',
+    # Materials & Mining
+    'LIN', 'APD', 'ECL', 'SHW', 'NEM', 'FCX', 'GOLD', 'AA', 'CLF', 'X',
     
-    # High Volatility / Meme / Crypto
-    'GME', 'AMC', 'MARA', 'RIOT', 'MSTR',
+    # Real Estate
+    'AMT', 'PLD', 'CCI', 'EQIX', 'SPG', 'O', 'WELL', 'AVB', 'EQR',
+    
+    # Telecom
+    'T', 'VZ', 'TMUS', 'CMCSA', 'CHTR',
+    
+    # ETFs (for reference/comparison)
+    'SPY', 'QQQ', 'IWM', 'DIA', 'ARKK', 'XLF', 'XLE', 'XLK', 'XLV', 'XLI',
+    'GLD', 'SLV', 'USO', 'TLT', 'HYG', 'VXX', 'SOXL', 'TQQQ',
+    
+    # High Volatility / Meme / Crypto-adjacent
+    'GME', 'AMC', 'BBBY', 'BB', 'MARA', 'RIOT', 'CLSK', 'BITF', 'HUT',
+    'MSTR', 'CIFR', 'IREN',
+    
+    # SPACs & Recent IPOs
+    'DWAC', 'IONQ', 'JOBY', 'LILM', 'RUM', 'DNA',
 ]
 
 
@@ -648,17 +97,14 @@ def analyze_stock_quick(ticker: str) -> dict:
         engine = VolatilityEngine(ticker, period='6mo')
         engine.fetch_data()
         
-        if engine.data is None or len(engine.data) < 30:
+        if len(engine.data) < 30:
             return None
             
         vol_df = engine.calculate_all_volatilities(window=21)
         
-        if vol_df is None or len(vol_df) < 20:
-            return None
-        
         current_vol = vol_df['Yang_Zhang'].iloc[-1]
         avg_vol = vol_df['Yang_Zhang'].mean()
-        vol_trend = (current_vol - avg_vol) / avg_vol if avg_vol > 0 else 0  # Is vol rising or falling?
+        vol_trend = (current_vol - avg_vol) / avg_vol  # Is vol rising or falling?
         
         # Get price data
         current_price = vol_df['Close'].iloc[-1]
@@ -672,72 +118,38 @@ def analyze_stock_quick(ticker: str) -> dict:
         
         return {
             'ticker': ticker,
-            'price': float(current_price),
-            'volatility': float(current_vol),
-            'avg_volatility': float(avg_vol),
-            'vol_trend': float(vol_trend),
+            'price': current_price,
+            'volatility': current_vol,
+            'avg_volatility': avg_vol,
+            'vol_trend': vol_trend,
             'regime': regime,
-            'price_change_5d': float(price_change_5d),
-            'price_change_20d': float(price_change_20d),
-            'dollar_volume': float(avg_dollar_volume),
+            'price_change_5d': price_change_5d,
+            'price_change_20d': price_change_20d,
+            'dollar_volume': avg_dollar_volume,
             'score_daytrade': 0,
             'score_swing': 0,
             'score_longterm': 0
         }
-    except Exception:
+    except Exception as e:
         return None
 
 
 def screen_stocks() -> dict:
     """Screen stocks and categorize for different trading styles"""
-    import sys
-    
-    def log(msg):
-        print(f"[SCREEN] {msg}")
-        sys.stdout.flush()
-    
     results = []
-    failed = 0
-    total = len(STOCK_UNIVERSE)
     
-    log(f"Starting to screen {total} stocks...")
-    
-    # Use ThreadPoolExecutor for parallel analysis (5 workers for stability)
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_ticker = {executor.submit(analyze_stock_quick, ticker): ticker 
-                              for ticker in STOCK_UNIVERSE}
-            
-            completed = 0
-            for future in concurrent.futures.as_completed(future_to_ticker):
-                ticker = future_to_ticker[future]
-                completed += 1
-                try:
-                    result = future.result(timeout=15)  # 15 second timeout per stock
-                    if result:
-                        results.append(result)
-                    else:
-                        failed += 1
-                except concurrent.futures.TimeoutError:
-                    failed += 1
-                    log(f"Timeout analyzing {ticker}")
-                except Exception as e:
-                    failed += 1
-                    # Only log every 10th error to avoid spam
-                    if failed % 10 == 0:
-                        log(f"Error analyzing {ticker}: {str(e)}")
-                
-                # Log progress every 25 stocks
-                if completed % 25 == 0:
-                    log(f"Progress: {completed}/{total} stocks analyzed, {len(results)} successful, {failed} failed")
-    except Exception as e:
-        log(f"ThreadPool error: {str(e)}")
-    
-    log(f"Screening complete: {len(results)} successful out of {total} ({failed} failed)")
+    # Use ThreadPoolExecutor for parallel analysis (10 workers for faster scanning)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_ticker = {executor.submit(analyze_stock_quick, ticker): ticker 
+                          for ticker in STOCK_UNIVERSE}
+        
+        for future in concurrent.futures.as_completed(future_to_ticker):
+            result = future.result()
+            if result:
+                results.append(result)
     
     if not results:
-        log("WARNING: No stocks were successfully analyzed!")
-        return {'daytrade': [], 'swing': [], 'longterm': [], 'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M')}
+        return {'daytrade': [], 'swing': [], 'longterm': []}
     
     # Score stocks for each category
     for stock in results:
@@ -803,15 +215,10 @@ def screen_stocks() -> dict:
         if abs(stock['price_change_20d']) < 0.10:
             stock['score_longterm'] += 15
     
-    # Get top picks by score, then sort by price (highest to lowest)
-    daytrade_picks = sorted(results, key=lambda x: x['score_daytrade'], reverse=True)[:25]
-    daytrade_picks = sorted(daytrade_picks, key=lambda x: x['price'], reverse=True)
-    
-    swing_picks = sorted(results, key=lambda x: x['score_swing'], reverse=True)[:25]
-    swing_picks = sorted(swing_picks, key=lambda x: x['price'], reverse=True)
-    
-    longterm_picks = sorted(results, key=lambda x: x['score_longterm'], reverse=True)[:25]
-    longterm_picks = sorted(longterm_picks, key=lambda x: x['price'], reverse=True)
+    # Sort and get top 50 picks for each category
+    daytrade_picks = sorted(results, key=lambda x: x['score_daytrade'], reverse=True)[:50]
+    swing_picks = sorted(results, key=lambda x: x['score_swing'], reverse=True)[:50]
+    longterm_picks = sorted(results, key=lambda x: x['score_longterm'], reverse=True)[:50]
     
     return {
         'daytrade': daytrade_picks,
@@ -1177,14 +584,6 @@ app.index_string = '''
                 border-radius: 12px;
                 padding: 1rem;
                 border: 1px solid rgba(255, 255, 255, 0.1);
-            }
-            .news-card:hover {
-                background: rgba(255, 255, 255, 0.05) !important;
-                transform: translateX(5px);
-            }
-            .news-title-link:hover {
-                color: var(--accent-cyan) !important;
-                text-decoration: underline !important;
             }
         </style>
     </head>
@@ -1754,485 +1153,455 @@ app.layout = html.Div([
             ], width=12)
         ]),
         
-        # Navigation Buttons (horizontal menu)
+        # Navigation Bar
         html.Div([
             dbc.ButtonGroup([
-                dbc.Button("📊 Volatility", id="nav-volatility", color="info", outline=True, 
-                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                dbc.Button("📊 Volatility", id="nav-volatility", color="info", outline=False, 
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600', 'fontSize': '0.85rem'}),
                 dbc.Button("🎯 Stock Picks", id="nav-picks", color="secondary", outline=True,
-                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
-                dbc.Button("💡 Buy Signals", id="nav-recommendations", color="secondary", outline=True,
-                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600', 'fontSize': '0.85rem'}),
+                dbc.Button("🔍 Analyzer", id="nav-analyzer", color="secondary", outline=True,
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600', 'fontSize': '0.85rem'}),
+                dbc.Button("💡 Buy Signals", id="nav-signals", color="secondary", outline=True,
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600', 'fontSize': '0.85rem'}),
                 dbc.Button("🔥 Movers", id="nav-movers", color="secondary", outline=True,
-                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600', 'fontSize': '0.85rem'}),
                 dbc.Button("📰 News", id="nav-news", color="secondary", outline=True,
-                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
+                          className="me-1", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600', 'fontSize': '0.85rem'}),
                 dbc.Button("💰 Portfolio", id="nav-portfolio", color="secondary", outline=True,
-                          style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}),
-            ], className="mb-4 mt-3")
+                          style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600', 'fontSize': '0.85rem'}),
+            ], className="mb-4 mt-2")
         ], style={'overflowX': 'auto', 'whiteSpace': 'nowrap'}),
         
-        # ===== SECTION 1: VOLATILITY ANALYSIS =====
+        # ===== SECTION 1: VOLATILITY =====
         html.Div(id="section-volatility", children=[
-            # Input Section
-            dbc.Row([
-                dbc.Col([
-                    html.Div([
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Label("Stock Ticker", className="text-muted small"),
-                                dbc.Input(
-                                    id="ticker-input",
-                                    type="text",
-                                    value="AAPL",
-                                    placeholder="Enter ticker (e.g., AAPL, TSLA)",
-                                    className="bg-dark text-light border-secondary",
-                                    style={'fontFamily': 'JetBrains Mono'}
-                                )
-                            ], md=4),
-                            dbc.Col([
-                                dbc.Label("Time Period", className="text-muted small"),
-                                dbc.Select(
-                                    id="period-select",
-                                    options=[
-                                        {"label": "1 Year", "value": "1y"},
-                                        {"label": "2 Years", "value": "2y"},
-                                        {"label": "5 Years", "value": "5y"},
-                                    ],
-                                    value="2y",
-                                    className="bg-dark text-light border-secondary"
-                                )
-                            ], md=3),
-                            dbc.Col([
-                                dbc.Label("Forecast Days", className="text-muted small"),
-                                dbc.Input(
-                                    id="forecast-days",
-                                    type="number",
-                                    value=30,
-                                    min=7,
-                                    max=90,
-                                    className="bg-dark text-light border-secondary",
-                                    style={'fontFamily': 'JetBrains Mono'}
-                                )
-                            ], md=2),
-                            dbc.Col([
-                                dbc.Label(" ", className="small"),
-                                dbc.Button(
-                                    "Analyze",
-                                    id="analyze-btn",
-                                    color="info",
-                                    className="w-100",
-                                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                                )
-                            ], md=3, className="d-flex align-items-end")
-                        ])
-                    ], className="input-group mb-4")
-                ], width=12)
-            ]),
-            
-            # Loading indicator
-            dcc.Loading(
-                id="loading",
-                type="circle",
-                color="#00d4ff",
-                children=[
-                    html.Div(id="metrics-container"),
+        
+        # Input Section
+        dbc.Row([
+            dbc.Col([
+                html.Div([
                     dbc.Row([
                         dbc.Col([
-                            html.Div([
-                                dcc.Graph(id="price-volatility-chart", config={'displayModeBar': False})
-                            ], className="chart-container mb-4")
-                        ], width=12)
-                    ]),
-                    dbc.Row([
-                        dbc.Col([
-                            html.Div([
-                                dcc.Graph(id="price-forecast-chart", config={'displayModeBar': False})
-                            ], className="chart-container mb-4")
-                        ], md=6),
-                        dbc.Col([
-                            html.Div([
-                                dcc.Graph(id="forecast-chart", config={'displayModeBar': False})
-                            ], className="chart-container mb-4")
-                        ], md=6)
-                    ]),
-                    dbc.Row([
-                        dbc.Col([
-                            html.Div([
-                                dcc.Graph(id="distribution-chart", config={'displayModeBar': False})
-                            ], className="chart-container mb-4")
+                            dbc.Label("Stock Ticker", className="text-muted small"),
+                            dbc.Input(
+                                id="ticker-input",
+                                type="text",
+                                value="AAPL",
+                                placeholder="Enter ticker (e.g., AAPL, TSLA)",
+                                className="bg-dark text-light border-secondary",
+                                style={'fontFamily': 'JetBrains Mono'}
+                            )
                         ], md=4),
                         dbc.Col([
-                            html.Div([
-                                dcc.Graph(id="range-chart", config={'displayModeBar': False})
-                            ], className="chart-container mb-4")
-                        ], md=4),
+                            dbc.Label("Time Period", className="text-muted small"),
+                            dbc.Select(
+                                id="period-select",
+                                options=[
+                                    {"label": "1 Year", "value": "1y"},
+                                    {"label": "2 Years", "value": "2y"},
+                                    {"label": "5 Years", "value": "5y"},
+                                ],
+                                value="2y",
+                                className="bg-dark text-light border-secondary"
+                            )
+                        ], md=3),
                         dbc.Col([
-                            html.Div(id="recommendations-container", className="chart-container mb-4")
-                        ], md=4)
-                    ]),
-                ]
-            ),
+                            dbc.Label("Forecast Days", className="text-muted small"),
+                            dbc.Input(
+                                id="forecast-days",
+                                type="number",
+                                value=30,
+                                min=7,
+                                max=90,
+                                className="bg-dark text-light border-secondary",
+                                style={'fontFamily': 'JetBrains Mono'}
+                            )
+                        ], md=2),
+                        dbc.Col([
+                            dbc.Label(" ", className="small"),
+                            dbc.Button(
+                                "Analyze",
+                                id="analyze-btn",
+                                color="info",
+                                className="w-100",
+                                style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                            )
+                        ], md=3, className="d-flex align-items-end")
+                    ])
+                ], className="input-group mb-4")
+            ], width=12)
         ]),
+        
+        # Loading indicator
+        dcc.Loading(
+            id="loading",
+            type="circle",
+            color="#00d4ff",
+            children=[
+                # Metric Cards
+                html.Div(id="metrics-container"),
+                
+                # Charts Row 1
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            dcc.Graph(id="price-volatility-chart", config={'displayModeBar': False})
+                        ], className="chart-container mb-4")
+                    ], width=12)
+                ]),
+                
+                # Charts Row 2 - Forecasts
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            dcc.Graph(id="price-forecast-chart", config={'displayModeBar': False})
+                        ], className="chart-container mb-4")
+                    ], md=6),
+                    dbc.Col([
+                        html.Div([
+                            dcc.Graph(id="forecast-chart", config={'displayModeBar': False})
+                        ], className="chart-container mb-4")
+                    ], md=6)
+                ]),
+                
+                # Charts Row 3 - Distribution & Range
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            dcc.Graph(id="distribution-chart", config={'displayModeBar': False})
+                        ], className="chart-container mb-4")
+                    ], md=4),
+                    dbc.Col([
+                        html.Div([
+                            dcc.Graph(id="range-chart", config={'displayModeBar': False})
+                        ], className="chart-container mb-4")
+                    ], md=4),
+                    dbc.Col([
+                        html.Div(id="recommendations-container", className="chart-container mb-4")
+                    ], md=4)
+                ]),
+            ]
+        ),
+        
+        ]),  # End section-volatility
         
         # ===== SECTION 2: STOCK PICKS =====
         html.Div(id="section-picks", style={'display': 'none'}, children=[
-            dbc.Row([
-                dbc.Col([
-                    html.H3("🎯 Daily Stock Picks", className="mb-3", 
-                           style={'fontFamily': 'JetBrains Mono', 
-                                  'background': 'linear-gradient(135deg, #00d4ff 0%, #ff00aa 100%)',
-                                  '-webkit-background-clip': 'text',
-                                  '-webkit-text-fill-color': 'transparent'}),
-                    html.P("Top 80 liquid stocks analyzed for volatility, liquidity, and momentum", 
-                           className="text-muted small mb-3"),
-                    dbc.Button(
-                        "🔄 Scan Market",
-                        id="scan-btn",
-                        color="info",
-                        className="mb-4",
-                        style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                    ),
-                ], width=12)
-            ]),
-            
-            dcc.Loading(
-                id="loading-picks",
-                type="circle",
-                color="#00d4ff",
-                children=[
-                    dbc.Row([
-                        dbc.Col([
-                            html.Div([
-                                html.H5("⚡ Day Trade", className="mb-2", 
-                                       style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("High volatility, liquid stocks for intraday moves", 
-                                       className="text-muted small mb-2"),
-                                html.Div(id="daytrade-picks", style={
-                                    'maxHeight': '500px',
-                                    'overflowY': 'auto',
-                                    'paddingRight': '10px'
-                                })
-                            ], className="chart-container mb-4")
-                        ], md=4),
-                        dbc.Col([
-                            html.Div([
-                                html.H5("🌊 Swing Trade", className="mb-2",
-                                       style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("Trending stocks for multi-day holds (2-10 days)", 
-                                       className="text-muted small mb-2"),
-                                html.Div(id="swing-picks", style={
-                                    'maxHeight': '500px',
-                                    'overflowY': 'auto',
-                                    'paddingRight': '10px'
-                                })
-                            ], className="chart-container mb-4")
-                        ], md=4),
-                        dbc.Col([
-                            html.Div([
-                                html.H5("🏦 Long Term", className="mb-2",
-                                       style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("Stable, lower volatility stocks for investing", 
-                                       className="text-muted small mb-2"),
-                                html.Div(id="longterm-picks", style={
-                                    'maxHeight': '500px',
-                                    'overflowY': 'auto',
-                                    'paddingRight': '10px'
-                                })
-                            ], className="chart-container mb-4")
-                        ], md=4),
-                    ])
-                ]
-            ),
+        dbc.Row([
+            dbc.Col([
+                html.H3("🎯 Daily Stock Picks", className="mb-3", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #00d4ff 0%, #ff00aa 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("Stocks analyzed based on volatility, liquidity, and momentum", 
+                       className="text-muted small mb-3"),
+                dbc.Button(
+                    "🔄 Scan Market",
+                    id="scan-btn",
+                    color="info",
+                    className="mb-4",
+                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                ),
+            ], width=12)
         ]),
         
-        # ===== SECTION 3: PORTFOLIO BUILDER =====
+        dcc.Loading(
+            id="loading-picks",
+            type="circle",
+            color="#00d4ff",
+            children=[
+                dbc.Row([
+                    # Day Trade Picks
+                    dbc.Col([
+                        html.Div([
+                            html.H5("⚡ Day Trade (50)", className="mb-2", 
+                                   style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("High volatility, liquid stocks for intraday moves", 
+                                   className="text-muted small mb-2"),
+                            html.Div(id="daytrade-picks", style={
+                                'maxHeight': '500px',
+                                'overflowY': 'auto',
+                                'paddingRight': '10px'
+                            })
+                        ], className="chart-container mb-4")
+                    ], md=4),
+                    
+                    # Swing Trade Picks
+                    dbc.Col([
+                        html.Div([
+                            html.H5("🌊 Swing Trade (50)", className="mb-2",
+                                   style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("Trending stocks for multi-day holds (2-10 days)", 
+                                   className="text-muted small mb-2"),
+                            html.Div(id="swing-picks", style={
+                                'maxHeight': '500px',
+                                'overflowY': 'auto',
+                                'paddingRight': '10px'
+                            })
+                        ], className="chart-container mb-4")
+                    ], md=4),
+                    
+                    # Long Term Picks
+                    dbc.Col([
+                        html.Div([
+                            html.H5("🏦 Long Term (50)", className="mb-2",
+                                   style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
+                            html.P("Stable, lower volatility stocks for investing", 
+                                   className="text-muted small mb-2"),
+                            html.Div(id="longterm-picks", style={
+                                'maxHeight': '500px',
+                                'overflowY': 'auto',
+                                'paddingRight': '10px'
+                            })
+                        ], className="chart-container mb-4")
+                    ], md=4),
+                ])
+            ]
+        ),
+        
+        ]),  # End section-picks
+        
+        # ===== SECTION 3: PORTFOLIO =====
         html.Div(id="section-portfolio", style={'display': 'none'}, children=[
-            dbc.Row([
-                dbc.Col([
-                    html.H3("💰 Investment Portfolio Builder", className="mb-2", 
-                           style={'fontFamily': 'JetBrains Mono', 
-                                  'background': 'linear-gradient(135deg, #00ff88 0%, #00d4ff 100%)',
-                                  '-webkit-background-clip': 'text',
-                                  '-webkit-text-fill-color': 'transparent'}),
-                    html.P("AI-powered portfolio recommendations to grow your investment", 
-                           className="text-muted small mb-3"),
-                ], width=12)
-            ]),
-            
-            dbc.Row([
-                dbc.Col([
-                    html.Div([
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Label("Starting Investment ($)", className="text-muted small"),
-                                dbc.Input(
-                                    id="investment-amount",
-                                    type="number",
-                                    value=50000,
-                                    min=1000,
-                                    step=1000,
-                                    className="bg-dark text-light border-secondary",
-                                    style={'fontFamily': 'JetBrains Mono'}
-                                )
-                            ], md=4),
-                            dbc.Col([
-                                dbc.Label("Target Amount ($)", className="text-muted small"),
-                                dbc.Input(
-                                    id="target-amount",
-                                    type="number",
-                                    value=100000,
-                                    min=1000,
-                                    step=1000,
-                                    className="bg-dark text-light border-secondary",
-                                    style={'fontFamily': 'JetBrains Mono'}
-                                )
-                            ], md=3),
-                            dbc.Col([
-                                dbc.Label("Investment Timeline", className="text-muted small"),
-                                dbc.Select(
-                                    id="investment-timeline",
-                                    options=[
-                                        {'label': '1 Year', 'value': 1},
-                                        {'label': '2 Years', 'value': 2},
-                                        {'label': '3 Years', 'value': 3},
-                                        {'label': '4 Years', 'value': 4},
-                                        {'label': '5 Years', 'value': 5},
-                                        {'label': '6 Years', 'value': 6},
-                                        {'label': '7 Years', 'value': 7},
-                                        {'label': '8 Years', 'value': 8},
-                                        {'label': '9 Years', 'value': 9},
-                                        {'label': '10 Years', 'value': 10},
-                                    ],
-                                    value=2,
-                                    className="bg-dark text-light border-secondary",
-                                    style={'fontFamily': 'JetBrains Mono'}
-                                )
-                            ], md=2),
-                            dbc.Col([
-                                dbc.Label(" ", className="small"),
-                                dbc.Button(
-                                    "🔮 Build Portfolio",
-                                    id="build-portfolio-btn",
-                                    color="success",
-                                    className="w-100",
-                                    style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                                )
-                            ], md=3, className="d-flex align-items-end")
-                        ])
-                    ], className="input-group mb-4")
-                ], width=12)
-            ]),
-            
-            dcc.Loading(
-                id="loading-portfolio",
-                type="circle",
-                color="#00ff88",
-                children=[
-                    html.Div(id="portfolio-results")
-                ]
-            ),
+        dbc.Row([
+            dbc.Col([
+                html.H3("💰 Investment Portfolio Builder", className="mb-2", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #00ff88 0%, #00d4ff 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("AI-powered portfolio recommendations to grow your investment", 
+                       className="text-muted small mb-3"),
+            ], width=12)
         ]),
         
-        # ===== SECTION 4: NEWS =====
-        html.Div(id="section-news", style={'display': 'none'}, children=[
-            dbc.Row([
-                dbc.Col([
-                    html.H3("📰 Live Market News", className="mb-2", 
-                           style={'fontFamily': 'JetBrains Mono', 
-                                  'background': 'linear-gradient(135deg, #ffd93d 0%, #ff6b35 100%)',
-                                  '-webkit-background-clip': 'text',
-                                  '-webkit-text-fill-color': 'transparent'}),
-                    html.P("Real-time news from 80+ stocks across all sectors: mergers, acquisitions, FDA approvals, earnings & more", 
-                           className="text-muted small mb-3"),
-                ], width=9),
-                dbc.Col([
-                    dbc.Button(
-                        "🔄 Refresh News",
-                        id="refresh-news-btn",
-                        color="warning",
-                        className="mb-3",
-                        style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                    ),
-                ], width=3, className="text-end")
-            ]),
-            
-            dbc.Row([
-                dbc.Col([
-                    html.Div([
-                        html.Span("Filter: ", className="text-muted me-2", style={'fontSize': '0.85rem'}),
-                        dbc.ButtonGroup([
-                            dbc.Button("All", id="filter-all", color="secondary", size="sm", outline=True, className="me-1"),
-                            dbc.Button("🤝 M&A", id="filter-ma", color="secondary", size="sm", outline=True, className="me-1"),
-                            dbc.Button("🏛️ Regulatory", id="filter-reg", color="secondary", size="sm", outline=True, className="me-1"),
-                            dbc.Button("📊 Earnings", id="filter-earn", color="secondary", size="sm", outline=True, className="me-1"),
-                            dbc.Button("📈 Analyst", id="filter-analyst", color="secondary", size="sm", outline=True, className="me-1"),
-                            dbc.Button("🚀 Product", id="filter-prod", color="secondary", size="sm", outline=True, className="me-1"),
-                            dbc.Button("📉 Market", id="filter-market", color="secondary", size="sm", outline=True, className="me-1"),
-                            dbc.Button("👔 Leadership", id="filter-leader", color="secondary", size="sm", outline=True),
-                        ], size="sm")
-                    ], className="mb-3", style={'overflowX': 'auto', 'whiteSpace': 'nowrap'})
-                ], width=12)
-            ]),
-            
-            dcc.Loading(
-                id="loading-news",
-                type="circle",
-                color="#ffd93d",
-                children=[
-                    html.Div(id="news-container", style={
-                        'maxHeight': '800px',
-                        'overflowY': 'auto',
-                        'paddingRight': '10px'
-                    })
-                ]
-            ),
-            
-            dcc.Store(id='news-store'),
-            dcc.Interval(id='news-interval', interval=5*60*1000, n_intervals=0),
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label("Starting Investment ($)", className="text-muted small"),
+                            dbc.Input(
+                                id="investment-amount",
+                                type="number",
+                                value=50000,
+                                min=1000,
+                                step=1000,
+                                className="bg-dark text-light border-secondary",
+                                style={'fontFamily': 'JetBrains Mono'}
+                            )
+                        ], md=4),
+                        dbc.Col([
+                            dbc.Label("Target Amount ($)", className="text-muted small"),
+                            dbc.Input(
+                                id="target-amount",
+                                type="number",
+                                value=100000,
+                                min=1000,
+                                step=1000,
+                                className="bg-dark text-light border-secondary",
+                                style={'fontFamily': 'JetBrains Mono'}
+                            )
+                        ], md=4),
+                        dbc.Col([
+                            dbc.Label(" ", className="small"),
+                            dbc.Button(
+                                "🔮 Build Portfolio",
+                                id="build-portfolio-btn",
+                                color="success",
+                                className="w-100",
+                                style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                            )
+                        ], md=4, className="d-flex align-items-end")
+                    ])
+                ], className="input-group mb-4")
+            ], width=12)
         ]),
         
-        # ===== SECTION 5: MARKET MOVERS =====
+        dcc.Loading(
+            id="loading-portfolio",
+            type="circle",
+            color="#00ff88",
+            children=[
+                html.Div(id="portfolio-results")
+            ]
+        ),
+        
+        ]),  # End section-portfolio
+        
+        # ===== SECTION 4: STOCK ANALYZER =====
+        html.Div(id="section-analyzer", style={'display': 'none'}, children=[
+        dbc.Row([
+            dbc.Col([
+                html.H3("🔍 Stock Buy/Sell Analyzer", className="mb-2", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #ffd93d 0%, #ff6b35 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("Enter any stock ticker to get AI-powered buy or sell recommendation with detailed reasons", 
+                       className="text-muted small mb-3"),
+            ], width=12)
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label("Enter Stock Ticker", className="text-muted small"),
+                            dbc.Input(
+                                id="analyzer-ticker-input",
+                                type="text",
+                                placeholder="e.g., AAPL, TSLA, GME, NVDA",
+                                className="bg-dark text-light border-secondary",
+                                style={'fontFamily': 'JetBrains Mono'}
+                            )
+                        ], md=6),
+                        dbc.Col([
+                            dbc.Label(" ", className="small"),
+                            dbc.Button(
+                                "🔍 Analyze Stock",
+                                id="analyze-stock-btn",
+                                color="warning",
+                                className="w-100",
+                                style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
+                            )
+                        ], md=3, className="d-flex align-items-end"),
+                    ])
+                ], className="input-group mb-4")
+            ], width=12)
+        ]),
+        
+        dcc.Loading(
+            id="loading-stock-analysis",
+            type="circle",
+            color="#ffd93d",
+            children=[
+                html.Div(id="stock-analysis-result")
+            ]
+        ),
+        ]),  # End section-analyzer
+        
+        # ===== SECTION 5: BUY SIGNALS =====
+        html.Div(id="section-signals", style={'display': 'none'}, children=[
+        dbc.Row([
+            dbc.Col([
+                html.H3("💡 Daily Buy Recommendations", className="mb-2", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #ff6b35 0%, #ffd93d 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("AI-powered stock picks with buy reasons • Updated every 10 minutes", 
+                       className="text-muted mb-3", style={'fontSize': '0.85rem'})
+            ], width=12)
+        ]),
+        dbc.Row([
+            dbc.Col([
+                dbc.Label("Price Range Filter", className="text-muted small"),
+                dbc.Select(
+                    id="price-range-filter",
+                    options=[
+                        {"label": "All Prices", "value": "all"},
+                        {"label": "$500 - $1000+", "value": "500-1000"},
+                        {"label": "$100 - $500", "value": "100-500"},
+                        {"label": "$10 - $100", "value": "10-100"},
+                        {"label": "$10 or below", "value": "0-10"}
+                    ],
+                    value="all",
+                    className="bg-dark text-light border-secondary"
+                )
+            ], md=3),
+            dbc.Col([
+                dbc.Label(" ", className="small"),
+                dbc.Button("Get Recommendations", id="get-recommendations-btn", color="warning", 
+                          className="w-100", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'})
+            ], md=3, className="d-flex align-items-end")
+        ], className="mb-3"),
+        dcc.Store(id='recommendations-store'),
+        dcc.Loading(
+            id="loading-recommendations",
+            type="circle",
+            color="#ffd93d",
+            children=[
+                html.Div(id="buy-recommendations-container", style={
+                    'maxHeight': '500px', 'overflowY': 'auto', 'padding': '10px'
+                })
+            ]
+        ),
+        ]),  # End section-signals
+        
+        # ===== SECTION 6: MARKET MOVERS =====
         html.Div(id="section-movers", style={'display': 'none'}, children=[
-            dbc.Row([
-                dbc.Col([
-                    html.H3("🔥 Market Movers", className="mb-2", 
-                           style={'fontFamily': 'JetBrains Mono', 
-                                  'background': 'linear-gradient(135deg, #ff6b35 0%, #ff00aa 100%)',
-                                  '-webkit-background-clip': 'text',
-                                  '-webkit-text-fill-color': 'transparent'}),
-                    html.P("Real-time most active, gainers, losers, 52-week highs/lows, and dividend stocks", 
-                           className="text-muted small mb-3"),
-                ], width=9),
-                dbc.Col([
-                    dbc.Button(
-                        "🔄 Refresh Movers",
-                        id="refresh-movers-btn",
-                        color="danger",
-                        className="mb-3",
-                        style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                    ),
-                ], width=3, className="text-end")
-            ]),
-            
-            dcc.Loading(
-                id="loading-movers",
-                type="circle",
-                color="#ff6b35",
-                children=[
-                    dbc.Row([
-                        dbc.Col([
-                            html.Div([
-                                html.H5("📊 Most Active", className="mb-2", 
-                                       style={'color': '#00d4ff', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("Highest trading volume today", className="text-muted small mb-2"),
-                                html.Div(id="most-active-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
-                            ], className="chart-container mb-3")
-                        ], md=4),
-                        dbc.Col([
-                            html.Div([
-                                html.H5("🚀 Top Gainers", className="mb-2", 
-                                       style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("Biggest price increases today", className="text-muted small mb-2"),
-                                html.Div(id="top-gainers-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
-                            ], className="chart-container mb-3")
-                        ], md=4),
-                        dbc.Col([
-                            html.Div([
-                                html.H5("📉 Top Losers", className="mb-2", 
-                                       style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("Biggest price decreases today", className="text-muted small mb-2"),
-                                html.Div(id="top-losers-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
-                            ], className="chart-container mb-3")
-                        ], md=4),
-                    ]),
-                    dbc.Row([
-                        dbc.Col([
-                            html.Div([
-                                html.H5("⬆️ 52-Week Highs", className="mb-2", 
-                                       style={'color': '#00ff88', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("Near or at yearly highs", className="text-muted small mb-2"),
-                                html.Div(id="week52-high-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
-                            ], className="chart-container mb-3")
-                        ], md=4),
-                        dbc.Col([
-                            html.Div([
-                                html.H5("⬇️ 52-Week Lows", className="mb-2", 
-                                       style={'color': '#ff6b35', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("Near or at yearly lows", className="text-muted small mb-2"),
-                                html.Div(id="week52-low-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
-                            ], className="chart-container mb-3")
-                        ], md=4),
-                        dbc.Col([
-                            html.Div([
-                                html.H5("💰 Top Dividends", className="mb-2", 
-                                       style={'color': '#ffd93d', 'fontFamily': 'JetBrains Mono'}),
-                                html.P("Highest dividend yields", className="text-muted small mb-2"),
-                                html.Div(id="dividend-list", style={'maxHeight': '400px', 'overflowY': 'auto'})
-                            ], className="chart-container mb-3")
-                        ], md=4),
-                    ]),
-                ]
-            ),
-            dcc.Interval(id='movers-interval', interval=5*60*1000, n_intervals=0),
+        dbc.Row([
+            dbc.Col([
+                html.H3("🔥 Market Movers", className="mb-2", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #ff4444 0%, #ff8800 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("Most active stocks, top gainers & losers, 52-week highs/lows", 
+                       className="text-muted mb-3", style={'fontSize': '0.85rem'})
+            ], width=12)
         ]),
-        
-        # ===== SECTION 6: BUY RECOMMENDATIONS =====
-        html.Div(id="section-recommendations", style={'display': 'none'}, children=[
-            dbc.Row([
-                dbc.Col([
-                    html.H3("🎯 Daily Buy Recommendations", className="mb-2", 
-                           style={'fontFamily': 'JetBrains Mono', 
-                                  'background': 'linear-gradient(135deg, #00ff88 0%, #00d4ff 100%)',
-                                  '-webkit-background-clip': 'text',
-                                  '-webkit-text-fill-color': 'transparent'}),
-                    html.P("AI-analyzed stock picks with detailed buy reasons based on momentum, technicals & fundamentals", 
-                           className="text-muted small mb-3"),
-                ], width=12)
-            ]),
-            
-            dbc.Row([
-                dbc.Col([
-                    html.Div([
-                        dbc.Label("💰 Filter by Price Range:", className="text-muted small me-3"),
-                        dbc.Select(
-                            id="price-range-filter",
-                            options=[
-                                {'label': 'All Prices', 'value': 'all'},
-                                {'label': '$500 - $1000+', 'value': '500-1000'},
-                                {'label': '$100 - $500', 'value': '100-500'},
-                                {'label': '$10 - $100', 'value': '10-100'},
-                                {'label': '$10 or Below', 'value': '0-10'},
-                            ],
-                            value='all',
-                            className="bg-dark text-light border-secondary",
-                            style={'width': '200px', 'display': 'inline-block', 'fontFamily': 'JetBrains Mono'}
-                        ),
-                    ], style={'display': 'flex', 'alignItems': 'center'})
-                ], width=9),
-                dbc.Col([
-                    dbc.Button(
-                        "🔄 Get Picks",
-                        id="refresh-recommendations-btn",
-                        color="success",
-                        style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'}
-                    ),
-                ], width=3, className="text-end")
-            ], className="mb-3"),
-            
-            dcc.Loading(
-                id="loading-recommendations",
-                type="circle",
-                color="#00ff88",
-                children=[
-                    html.Div(id="recommendations-list")
-                ]
-            ),
-            dcc.Store(id='recommendations-store'),
-            dcc.Interval(id='recommendations-interval', interval=10*60*1000, n_intervals=0),
+        dbc.Row([
+            dbc.Col([
+                dbc.Button("🔄 Refresh Market Movers", id="refresh-movers-btn", color="danger", 
+                          className="mb-3", style={'fontFamily': 'JetBrains Mono', 'fontWeight': '600'})
+            ])
         ]),
+        dcc.Interval(id='movers-interval', interval=5*60*1000, n_intervals=0),
+        dcc.Loading(
+            id="loading-movers",
+            type="circle",
+            color="#ff4444",
+            children=[
+                html.Div(id="market-movers-container")
+            ]
+        ),
+        ]),  # End section-movers
         
-        # Disclaimer (always visible)
+        # ===== SECTION 7: NEWS =====
+        html.Div(id="section-news", style={'display': 'none'}, children=[
+        dbc.Row([
+            dbc.Col([
+                html.H3("📰 Live Market News", className="mb-2", 
+                       style={'fontFamily': 'JetBrains Mono', 
+                              'background': 'linear-gradient(135deg, #00d4ff 0%, #00ff88 100%)',
+                              '-webkit-background-clip': 'text',
+                              '-webkit-text-fill-color': 'transparent'}),
+                html.P("Latest news from 80+ stocks • Auto-refreshes every 5 minutes", 
+                       className="text-muted mb-3", style={'fontSize': '0.85rem'})
+            ], width=12)
+        ]),
+        dbc.Row([
+            dbc.Col([
+                dbc.ButtonGroup([
+                    dbc.Button("All News", id="filter-all", color="info", size="sm", className="me-1"),
+                    dbc.Button("Earnings", id="filter-earnings", color="secondary", outline=True, size="sm", className="me-1"),
+                    dbc.Button("Mergers", id="filter-mergers", color="secondary", outline=True, size="sm", className="me-1"),
+                    dbc.Button("FDA/Gov", id="filter-fda", color="secondary", outline=True, size="sm", className="me-1"),
+                    dbc.Button("Upgrades", id="filter-upgrades", color="secondary", outline=True, size="sm"),
+                ], className="mb-3"),
+                dbc.Button("🔄 Refresh News", id="refresh-news-btn", color="info", outline=True,
+                          className="ms-3 mb-3", size="sm", style={'fontFamily': 'JetBrains Mono'})
+            ])
+        ]),
+        dcc.Store(id='news-store'),
+        dcc.Interval(id='news-interval', interval=5*60*1000, n_intervals=0),
+        dcc.Loading(
+            id="loading-news",
+            type="circle",
+            color="#00d4ff",
+            children=[
+                html.Div(id="news-container", style={
+                    'maxHeight': '600px', 'overflowY': 'auto', 'padding': '10px'
+                })
+            ]
+        ),
+        ]),  # End section-news
+        
+        # Disclaimer
         dbc.Row([
             dbc.Col([
                 html.Div([
@@ -2271,59 +1640,78 @@ app.layout = html.Div([
 @app.callback(
     [Output("section-volatility", "style"),
      Output("section-picks", "style"),
-     Output("section-recommendations", "style"),
+     Output("section-analyzer", "style"),
+     Output("section-signals", "style"),
      Output("section-movers", "style"),
      Output("section-news", "style"),
      Output("section-portfolio", "style"),
      Output("nav-volatility", "color"),
+     Output("nav-volatility", "outline"),
      Output("nav-picks", "color"),
-     Output("nav-recommendations", "color"),
+     Output("nav-picks", "outline"),
+     Output("nav-analyzer", "color"),
+     Output("nav-analyzer", "outline"),
+     Output("nav-signals", "color"),
+     Output("nav-signals", "outline"),
      Output("nav-movers", "color"),
+     Output("nav-movers", "outline"),
      Output("nav-news", "color"),
-     Output("nav-portfolio", "color")],
+     Output("nav-news", "outline"),
+     Output("nav-portfolio", "color"),
+     Output("nav-portfolio", "outline")],
     [Input("nav-volatility", "n_clicks"),
      Input("nav-picks", "n_clicks"),
-     Input("nav-recommendations", "n_clicks"),
+     Input("nav-analyzer", "n_clicks"),
+     Input("nav-signals", "n_clicks"),
      Input("nav-movers", "n_clicks"),
      Input("nav-news", "n_clicks"),
      Input("nav-portfolio", "n_clicks")],
     prevent_initial_call=False
 )
-def switch_section(vol_clicks, picks_clicks, reco_clicks, movers_clicks, news_clicks, portfolio_clicks):
-    """Switch between dashboard sections based on navigation button clicks"""
+def switch_section(vol_clicks, picks_clicks, analyzer_clicks, signals_clicks, movers_clicks, news_clicks, portfolio_clicks):
+    """Switch between dashboard sections"""
     from dash import ctx
     
-    # Default: show volatility section
     triggered = ctx.triggered_id if ctx.triggered_id else "nav-volatility"
     
-    # Visibility styles
     show = {'display': 'block'}
     hide = {'display': 'none'}
     
-    # Button colors
-    active = "info"
-    inactive = "secondary"
-    
-    # Map triggered button to section
-    section_map = {
-        "nav-volatility": 0,
-        "nav-picks": 1,
-        "nav-recommendations": 2,
-        "nav-movers": 3,
-        "nav-news": 4,
-        "nav-portfolio": 5
+    # Section visibility: [volatility, picks, analyzer, signals, movers, news, portfolio]
+    sections = {
+        "nav-volatility": [show, hide, hide, hide, hide, hide, hide],
+        "nav-picks": [hide, show, hide, hide, hide, hide, hide],
+        "nav-analyzer": [hide, hide, show, hide, hide, hide, hide],
+        "nav-signals": [hide, hide, hide, show, hide, hide, hide],
+        "nav-movers": [hide, hide, hide, hide, show, hide, hide],
+        "nav-news": [hide, hide, hide, hide, hide, show, hide],
+        "nav-portfolio": [hide, hide, hide, hide, hide, hide, show]
     }
     
-    active_section = section_map.get(triggered, 0)
+    # Button states: [(color, outline) for each button]
+    active_btn = {
+        "nav-volatility": ("info", False),
+        "nav-picks": ("info", False),
+        "nav-analyzer": ("warning", False),
+        "nav-signals": ("warning", False),
+        "nav-movers": ("danger", False),
+        "nav-news": ("info", False),
+        "nav-portfolio": ("success", False)
+    }
     
-    # Generate outputs
-    section_styles = [hide] * 6
-    section_styles[active_section] = show
+    inactive = ("secondary", True)
     
-    button_colors = [inactive] * 6
-    button_colors[active_section] = active
+    sec = sections.get(triggered, sections["nav-volatility"])
     
-    return (*section_styles, *button_colors)
+    # Build button outputs
+    btn_outputs = []
+    for nav_id in ["nav-volatility", "nav-picks", "nav-analyzer", "nav-signals", "nav-movers", "nav-news", "nav-portfolio"]:
+        if nav_id == triggered:
+            btn_outputs.extend(active_btn[nav_id])
+        else:
+            btn_outputs.extend(inactive)
+    
+    return (*sec, *btn_outputs)
 
 
 @app.callback(
@@ -2566,47 +1954,17 @@ def create_stock_card(stock: dict, style: str) -> html.Div:
 )
 def update_stock_picks(n_clicks):
     """Scan market and update stock picks"""
-    import traceback
-    import sys
-    
-    def log(msg):
-        print(f"[SCAN] {msg}")
-        sys.stdout.flush()
-    
-    log(f"Scan button clicked, n_clicks={n_clicks}")
-    
     if not n_clicks:
-        return (
-            html.P("Click 'Scan Market' to find picks", className="text-muted"),
-            html.P("Click 'Scan Market' to find picks", className="text-muted"),
-            html.P("Click 'Scan Market' to find picks", className="text-muted")
-        )
+        return [html.P("Click 'Scan Market' to analyze 150+ stocks", className="text-muted")] * 3
     
     try:
-        log("Starting stock screening...")
-        
         # Screen stocks
         picks = screen_stocks()
         
-        log(f"Screening complete. Found: daytrade={len(picks.get('daytrade', []))}, swing={len(picks.get('swing', []))}, longterm={len(picks.get('longterm', []))}")
-        
-        if not picks or (not picks.get('daytrade') and not picks.get('swing') and not picks.get('longterm')):
-            no_data_msg = html.Div([
-                html.P("⚠️ No stocks found. This may be due to:", className="text-warning"),
-                html.Ul([
-                    html.Li("Market data temporarily unavailable"),
-                    html.Li("Network connectivity issues"),
-                    html.Li("Try again in a few moments")
-                ], className="text-muted small")
-            ])
-            return no_data_msg, no_data_msg, no_data_msg
-        
         # Create cards for each category
-        daytrade_cards = [create_stock_card(s, 'daytrade') for s in picks.get('daytrade', [])]
-        swing_cards = [create_stock_card(s, 'swing') for s in picks.get('swing', [])]
-        longterm_cards = [create_stock_card(s, 'longterm') for s in picks.get('longterm', [])]
-        
-        log(f"Created cards: daytrade={len(daytrade_cards)}, swing={len(swing_cards)}, longterm={len(longterm_cards)}")
+        daytrade_cards = [create_stock_card(s, 'daytrade') for s in picks['daytrade']]
+        swing_cards = [create_stock_card(s, 'swing') for s in picks['swing']]
+        longterm_cards = [create_stock_card(s, 'longterm') for s in picks['longterm']]
         
         # Add count and timestamp header
         def make_header(count, updated):
@@ -2623,27 +1981,14 @@ def update_stock_picks(n_clicks):
                 })
             ], style={'marginBottom': '10px'})
         
-        last_updated = picks.get('last_updated', datetime.now().strftime('%Y-%m-%d %H:%M'))
-        
-        daytrade_content = html.Div([make_header(len(daytrade_cards), last_updated)] + daytrade_cards) if daytrade_cards else html.P("No day trade picks found", className="text-muted")
-        swing_content = html.Div([make_header(len(swing_cards), last_updated)] + swing_cards) if swing_cards else html.P("No swing trade picks found", className="text-muted")
-        longterm_content = html.Div([make_header(len(longterm_cards), last_updated)] + longterm_cards) if longterm_cards else html.P("No long-term picks found", className="text-muted")
-        
-        log("Returning results to UI")
-        return daytrade_content, swing_content, longterm_content
+        return (
+            html.Div([make_header(len(picks['daytrade']), picks['last_updated'])] + daytrade_cards) if daytrade_cards else html.P("No picks found", className="text-muted"),
+            html.Div([make_header(len(picks['swing']), picks['last_updated'])] + swing_cards) if swing_cards else html.P("No picks found", className="text-muted"),
+            html.Div([make_header(len(picks['longterm']), picks['last_updated'])] + longterm_cards) if longterm_cards else html.P("No picks found", className="text-muted")
+        )
         
     except Exception as e:
-        tb = traceback.format_exc()
-        log(f"Error during scan: {str(e)}")
-        log(f"Traceback: {tb}")
-        
-        error_msg = html.Div([
-            html.P(f"❌ Error scanning market: {str(e)}", className="text-danger"),
-            html.Details([
-                html.Summary("Technical details", className="text-muted small"),
-                html.Pre(tb, className="text-muted small", style={'fontSize': '0.7rem', 'maxHeight': '150px', 'overflow': 'auto'})
-            ])
-        ])
+        error_msg = html.P(f"Error scanning: {str(e)}", className="text-danger")
         return error_msg, error_msg, error_msg
 
 
@@ -2651,11 +1996,10 @@ def update_stock_picks(n_clicks):
     Output("portfolio-results", "children"),
     [Input("build-portfolio-btn", "n_clicks")],
     [State("investment-amount", "value"),
-     State("target-amount", "value"),
-     State("investment-timeline", "value")],
+     State("target-amount", "value")],
     prevent_initial_call=True
 )
-def update_portfolio(n_clicks, investment, target, timeline):
+def update_portfolio(n_clicks, investment, target):
     """Build and display investment portfolio recommendations"""
     if not n_clicks:
         return html.P("Enter your investment details and click 'Build Portfolio'", className="text-muted")
@@ -2663,11 +2007,10 @@ def update_portfolio(n_clicks, investment, target, timeline):
     try:
         investment = float(investment) if investment else 50000
         target = float(target) if target else 100000
-        timeline = int(timeline) if timeline else 2
         target_return = (target / investment) - 1
         
         # Build portfolios
-        result = build_investment_portfolio(investment, target_return, timeline)
+        result = build_investment_portfolio(investment, target_return)
         
         if not result:
             return html.P("Could not analyze stocks. Please try again.", className="text-danger")
@@ -2767,7 +2110,7 @@ def update_portfolio(n_clicks, investment, target, timeline):
                 ], md=2),
                 dbc.Col([
                     html.Div([
-                        html.Div(f"{timeline} {'Year' if timeline == 1 else 'Years'}", className="metric-value", 
+                        html.Div("2 Years", className="metric-value", 
                                 style={'color': '#ffd93d', 'fontSize': '1.5rem'}),
                         html.Div("Time Horizon", className="metric-label")
                     ], className="text-center")
@@ -2789,621 +2132,802 @@ def update_portfolio(n_clicks, investment, target, timeline):
         ])
 
 
-def create_news_card(news_item: dict) -> html.Div:
-    """Create a styled news card"""
-    # Category colors
-    category_colors = {
-        '🤝 M&A': '#ff00aa',
-        '🎉 IPO': '#00ff88',
-        '🏛️ Regulatory': '#ffd93d',
-        '📊 Earnings': '#00d4ff',
-        '📈 Analyst': '#ff6b35',
-        '👔 Leadership': '#9966ff',
-        '🚀 Product': '#00ff88',
-        '📉 Market': '#ff6b35',
-        '💰 Dividend': '#00d4ff',
-        '📰 News': '#8888aa'
-    }
+def analyze_single_stock(ticker: str) -> dict:
+    """
+    Analyze a single stock and generate buy/sell recommendation with reasons.
+    """
+    import yfinance as yf
     
-    category = news_item.get('category', '📰 News')
-    color = category_colors.get(category, '#8888aa')
-    time_ago = get_time_ago(news_item.get('published', 0))
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period='3mo')
+        
+        if hist.empty or len(hist) < 20:
+            return {'error': f'Insufficient data for {ticker}. Please check the ticker symbol.'}
+        
+        info = stock.info
+        
+        current_price = hist['Close'].iloc[-1]
+        
+        # Calculate key metrics
+        ret_5d = (hist['Close'].iloc[-1] / hist['Close'].iloc[-5] - 1) * 100 if len(hist) >= 5 else 0
+        ret_20d = (hist['Close'].iloc[-1] / hist['Close'].iloc[-20] - 1) * 100 if len(hist) >= 20 else 0
+        ret_60d = (hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100
+        
+        # Volatility
+        returns = hist['Close'].pct_change().dropna()
+        volatility = returns.std() * np.sqrt(252) * 100
+        
+        # Volume trend
+        avg_volume_recent = hist['Volume'].tail(5).mean()
+        avg_volume_older = hist['Volume'].tail(20).mean()
+        volume_surge = (avg_volume_recent / avg_volume_older - 1) * 100 if avg_volume_older > 0 else 0
+        
+        # 52-week data
+        week_52_high = info.get('fiftyTwoWeekHigh', current_price)
+        week_52_low = info.get('fiftyTwoWeekLow', current_price)
+        pct_from_high = ((current_price - week_52_high) / week_52_high * 100) if week_52_high else 0
+        pct_from_low = ((current_price - week_52_low) / week_52_low * 100) if week_52_low else 0
+        
+        # Moving averages
+        ma_20 = hist['Close'].tail(20).mean()
+        ma_50 = hist['Close'].tail(50).mean() if len(hist) >= 50 else ma_20
+        above_ma_20 = current_price > ma_20
+        above_ma_50 = current_price > ma_50
+        
+        # RSI
+        gains = returns[returns > 0].mean() if len(returns[returns > 0]) > 0 else 0
+        losses = abs(returns[returns < 0].mean()) if len(returns[returns < 0]) > 0 else 0.001
+        rs = gains / losses
+        rsi = 100 - (100 / (1 + rs))
+        
+        # Fundamentals
+        pe_ratio = info.get('trailingPE', 0) or 0
+        market_cap = info.get('marketCap', 0) or 0
+        revenue_growth = info.get('revenueGrowth', 0) or 0
+        profit_margin = info.get('profitMargins', 0) or 0
+        
+        # Calculate scores and reasons
+        buy_score = 50
+        buy_reasons = []
+        sell_reasons = []
+        
+        # Momentum analysis
+        if ret_5d > 5:
+            buy_score += 15
+            buy_reasons.append(f"🚀 Strong 5-day momentum: +{ret_5d:.1f}%")
+        elif ret_5d > 2:
+            buy_score += 8
+            buy_reasons.append(f"📈 Positive 5-day trend: +{ret_5d:.1f}%")
+        elif ret_5d < -5:
+            buy_score -= 10
+            sell_reasons.append(f"📉 Weak 5-day momentum: {ret_5d:.1f}%")
+        elif ret_5d < -2:
+            sell_reasons.append(f"⚠️ Slight 5-day decline: {ret_5d:.1f}%")
+        
+        if ret_20d > 15:
+            buy_score += 15
+            buy_reasons.append(f"🔥 Excellent monthly performance: +{ret_20d:.1f}%")
+        elif ret_20d > 8:
+            buy_score += 10
+            buy_reasons.append(f"💪 Strong 20-day gains: +{ret_20d:.1f}%")
+        elif ret_20d < -15:
+            buy_score -= 15
+            sell_reasons.append(f"🔻 Significant 20-day decline: {ret_20d:.1f}%")
+        elif ret_20d < -8:
+            buy_score -= 8
+            sell_reasons.append(f"📉 Bearish 20-day trend: {ret_20d:.1f}%")
+        
+        # Trend analysis
+        if above_ma_20 and above_ma_50:
+            buy_score += 15
+            buy_reasons.append("✅ Trading above both 20-day and 50-day moving averages (bullish)")
+        elif above_ma_20:
+            buy_score += 8
+            buy_reasons.append("📊 Above 20-day moving average")
+        elif not above_ma_20 and not above_ma_50:
+            buy_score -= 12
+            sell_reasons.append("❌ Below both moving averages (bearish trend)")
+        
+        # RSI analysis
+        if rsi < 30:
+            buy_score += 12
+            buy_reasons.append(f"💰 RSI at {rsi:.0f} - Oversold, potential bounce opportunity")
+        elif rsi < 40:
+            buy_score += 6
+            buy_reasons.append(f"👀 RSI at {rsi:.0f} - Approaching oversold territory")
+        elif rsi > 70:
+            buy_score -= 12
+            sell_reasons.append(f"⚠️ RSI at {rsi:.0f} - Overbought, potential pullback")
+        elif rsi > 60:
+            buy_reasons.append(f"📈 RSI at {rsi:.0f} - Healthy momentum")
+        
+        # Volume analysis
+        if volume_surge > 50:
+            buy_score += 8
+            buy_reasons.append(f"📊 High volume surge: +{volume_surge:.0f}% above average (strong interest)")
+        elif volume_surge > 20:
+            buy_reasons.append(f"📈 Increasing volume: +{volume_surge:.0f}% above average")
+        elif volume_surge < -30:
+            sell_reasons.append(f"📉 Declining volume: {volume_surge:.0f}% (waning interest)")
+        
+        # 52-week position
+        if pct_from_high > -5:
+            buy_score += 10
+            buy_reasons.append(f"🎯 Near 52-week high ({pct_from_high:+.1f}%) - Breakout potential")
+        elif pct_from_high < -30:
+            if ret_20d > 5:
+                buy_score += 8
+                buy_reasons.append(f"💎 Down {abs(pct_from_high):.0f}% from high but recovering - Value opportunity")
+            else:
+                sell_reasons.append(f"📉 Down {abs(pct_from_high):.0f}% from 52-week high")
+        
+        if pct_from_low < 10 and ret_5d > 0:
+            buy_score += 8
+            buy_reasons.append(f"📈 Near 52-week low with positive momentum - Potential reversal")
+        
+        # Volatility analysis
+        if 20 < volatility < 40:
+            buy_reasons.append(f"⚖️ Moderate volatility ({volatility:.0f}%) - Good risk/reward")
+        elif volatility > 60:
+            sell_reasons.append(f"⚡ High volatility ({volatility:.0f}%) - Increased risk")
+        elif volatility < 15:
+            buy_reasons.append(f"🛡️ Low volatility ({volatility:.0f}%) - More stable")
+        
+        # Fundamentals
+        if revenue_growth and revenue_growth > 0.20:
+            buy_score += 10
+            buy_reasons.append(f"📊 Strong revenue growth: {revenue_growth*100:.0f}% YoY")
+        elif revenue_growth and revenue_growth > 0.10:
+            buy_score += 5
+            buy_reasons.append(f"📈 Solid revenue growth: {revenue_growth*100:.0f}% YoY")
+        elif revenue_growth and revenue_growth < -0.10:
+            sell_reasons.append(f"📉 Declining revenue: {revenue_growth*100:.0f}% YoY")
+        
+        if pe_ratio:
+            if 10 < pe_ratio < 25:
+                buy_reasons.append(f"💰 Reasonable P/E ratio: {pe_ratio:.1f}")
+            elif pe_ratio > 50:
+                sell_reasons.append(f"⚠️ High P/E ratio: {pe_ratio:.1f} - Potentially overvalued")
+            elif pe_ratio < 10 and pe_ratio > 0:
+                buy_reasons.append(f"💎 Low P/E ratio: {pe_ratio:.1f} - Potential value")
+        
+        if profit_margin and profit_margin > 0.20:
+            buy_reasons.append(f"💵 Strong profit margin: {profit_margin*100:.1f}%")
+        elif profit_margin and profit_margin < 0:
+            sell_reasons.append(f"📉 Negative profit margin: {profit_margin*100:.1f}%")
+        
+        # Determine signal
+        buy_score = max(0, min(100, buy_score))
+        
+        if buy_score >= 75:
+            signal = 'STRONG BUY'
+            signal_color = '#00ff88'
+        elif buy_score >= 60:
+            signal = 'BUY'
+            signal_color = '#00d4ff'
+        elif buy_score >= 45:
+            signal = 'HOLD'
+            signal_color = '#ffd93d'
+        elif buy_score >= 30:
+            signal = 'SELL'
+            signal_color = '#ff6b35'
+        else:
+            signal = 'STRONG SELL'
+            signal_color = '#ff0055'
+        
+        return {
+            'ticker': ticker,
+            'name': info.get('shortName', ticker),
+            'price': current_price,
+            'signal': signal,
+            'signal_color': signal_color,
+            'score': buy_score,
+            'ret_5d': ret_5d,
+            'ret_20d': ret_20d,
+            'rsi': rsi,
+            'volatility': volatility,
+            'pct_from_high': pct_from_high,
+            'buy_reasons': buy_reasons[:6],
+            'sell_reasons': sell_reasons[:4],
+            'pe_ratio': pe_ratio,
+            'market_cap': market_cap
+        }
+        
+    except Exception as e:
+        return {'error': f'Error analyzing {ticker}: {str(e)}'}
+
+
+@app.callback(
+    Output("stock-analysis-result", "children"),
+    [Input("analyze-stock-btn", "n_clicks")],
+    [State("analyzer-ticker-input", "value")],
+    prevent_initial_call=True
+)
+def update_stock_analysis(n_clicks, ticker):
+    """Analyze a single stock and display recommendation"""
+    if not n_clicks or not ticker:
+        return html.P("Enter a stock ticker and click 'Analyze Stock'", className="text-muted")
     
-    # Related tickers
-    related = news_item.get('related_tickers', [])
-    ticker_badges = [
-        html.Span(t, style={
-            'background': 'rgba(0, 212, 255, 0.2)',
-            'color': '#00d4ff',
-            'padding': '2px 6px',
-            'borderRadius': '4px',
-            'fontSize': '0.7rem',
-            'marginRight': '4px',
-            'fontFamily': 'JetBrains Mono'
-        }) for t in related[:5]  # Limit to 5 tickers
-    ]
+    ticker = ticker.upper().strip()
+    
+    result = analyze_single_stock(ticker)
+    
+    if 'error' in result:
+        return html.Div([
+            html.P(f"❌ {result['error']}", className="text-danger"),
+            html.P("Please check the ticker symbol and try again.", className="text-muted small")
+        ])
+    
+    # Build the result card
+    signal_bg = f"{result['signal_color']}22"
+    
+    # Format market cap
+    market_cap = result.get('market_cap', 0)
+    if market_cap > 1e12:
+        cap_str = f"${market_cap/1e12:.2f}T"
+    elif market_cap > 1e9:
+        cap_str = f"${market_cap/1e9:.1f}B"
+    elif market_cap > 1e6:
+        cap_str = f"${market_cap/1e6:.0f}M"
+    else:
+        cap_str = "N/A"
     
     return html.Div([
-        # Header row: Category + Time
+        # Header with ticker and signal - mobile responsive
         html.Div([
-            html.Span(category, style={
-                'background': f'{color}22',
-                'color': color,
-                'padding': '3px 10px',
-                'borderRadius': '12px',
-                'fontSize': '0.75rem',
-                'fontWeight': '600'
-            }),
-            html.Span(time_ago, style={
-                'color': '#8888aa',
-                'fontSize': '0.75rem',
-                'marginLeft': 'auto'
-            })
-        ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '8px'}),
+            html.Div([
+                html.Span(result['ticker'], style={
+                    'fontFamily': 'JetBrains Mono',
+                    'fontWeight': '700',
+                    'fontSize': '1.5rem',
+                    'color': result['signal_color']
+                }),
+                html.Br(),
+                html.Span(f"{result.get('name', '')}", style={
+                    'color': '#8888aa',
+                    'fontSize': '0.75rem',
+                    'display': 'block',
+                    'marginTop': '2px'
+                }),
+            ], style={'marginBottom': '10px'}),
+            html.Div([
+                html.Span(result['signal'], style={
+                    'background': signal_bg,
+                    'color': result['signal_color'],
+                    'padding': '6px 14px',
+                    'borderRadius': '15px',
+                    'fontSize': '0.85rem',
+                    'fontWeight': '700',
+                    'fontFamily': 'JetBrains Mono',
+                    'border': f"2px solid {result['signal_color']}",
+                    'whiteSpace': 'nowrap'
+                }),
+            ])
+        ], style={'display': 'flex', 'flexWrap': 'wrap', 'justifyContent': 'space-between', 'alignItems': 'flex-start', 'marginBottom': '15px', 'gap': '10px'}),
         
-        # Title (link)
-        html.A(
-            news_item.get('title', 'Untitled'),
-            href=news_item.get('link', '#'),
-            target='_blank',
-            style={
-                'color': '#ffffff',
-                'textDecoration': 'none',
-                'fontWeight': '500',
-                'fontSize': '0.95rem',
-                'lineHeight': '1.4',
-                'display': 'block',
-                'marginBottom': '8px'
-            },
-            className='news-title-link'
-        ),
-        
-        # Footer: Publisher + Related tickers
+        # Price and metrics - mobile responsive grid
         html.Div([
-            html.Span(news_item.get('publisher', 'Unknown'), style={
-                'color': '#666688',
-                'fontSize': '0.75rem',
-                'marginRight': '10px'
-            }),
-            html.Div(ticker_badges, style={'display': 'inline-flex', 'flexWrap': 'wrap', 'gap': '2px'})
-        ], style={'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap'})
+            html.Div([
+                html.Div(f"${result['price']:.2f}", style={
+                    'fontSize': '1.8rem', 'fontWeight': '600', 'color': '#ffffff',
+                    'fontFamily': 'JetBrains Mono'
+                }),
+                html.Div("Current Price", style={'color': '#8888aa', 'fontSize': '0.7rem'})
+            ], style={'textAlign': 'center', 'padding': '10px'}),
+            html.Div([
+                html.Div(f"{result['score']}/100", style={
+                    'fontSize': '1.5rem', 'fontWeight': '600', 'color': result['signal_color'],
+                    'fontFamily': 'JetBrains Mono'
+                }),
+                html.Div("Buy Score", style={'color': '#8888aa', 'fontSize': '0.7rem'})
+            ], style={'textAlign': 'center', 'padding': '10px'}),
+            html.Div([
+                html.Div(f"{result['ret_5d']:+.1f}%", style={
+                    'fontSize': '1.2rem', 'fontWeight': '600',
+                    'color': '#00ff88' if result['ret_5d'] >= 0 else '#ff6b35',
+                    'fontFamily': 'JetBrains Mono'
+                }),
+                html.Div("5-Day", style={'color': '#8888aa', 'fontSize': '0.7rem'})
+            ], style={'textAlign': 'center', 'padding': '10px'}),
+            html.Div([
+                html.Div(f"{result['ret_20d']:+.1f}%", style={
+                    'fontSize': '1.2rem', 'fontWeight': '600',
+                    'color': '#00ff88' if result['ret_20d'] >= 0 else '#ff6b35',
+                    'fontFamily': 'JetBrains Mono'
+                }),
+                html.Div("20-Day", style={'color': '#8888aa', 'fontSize': '0.7rem'})
+            ], style={'textAlign': 'center', 'padding': '10px'}),
+            html.Div([
+                html.Div(f"{result['rsi']:.0f}", style={
+                    'fontSize': '1.2rem', 'fontWeight': '600', 'color': '#00d4ff',
+                    'fontFamily': 'JetBrains Mono'
+                }),
+                html.Div("RSI", style={'color': '#8888aa', 'fontSize': '0.7rem'})
+            ], style={'textAlign': 'center', 'padding': '10px'}),
+            html.Div([
+                html.Div(cap_str, style={
+                    'fontSize': '1.2rem', 'fontWeight': '600', 'color': '#ffd93d',
+                    'fontFamily': 'JetBrains Mono'
+                }),
+                html.Div("Mkt Cap", style={'color': '#8888aa', 'fontSize': '0.7rem'})
+            ], style={'textAlign': 'center', 'padding': '10px'}),
+        ], style={
+            'display': 'grid',
+            'gridTemplateColumns': 'repeat(3, 1fr)',
+            'gap': '5px',
+            'marginBottom': '20px',
+            'background': 'rgba(255,255,255,0.02)',
+            'borderRadius': '12px',
+            'padding': '10px'
+        }),
         
-    ], style={
-        'background': 'rgba(255, 255, 255, 0.02)',
-        'borderLeft': f'3px solid {color}',
-        'padding': '12px 15px',
-        'marginBottom': '10px',
-        'borderRadius': '0 10px 10px 0',
-        'transition': 'all 0.2s ease'
-    }, className='news-card')
+        # Buy/Sell reasons - mobile responsive
+        html.Div([
+            html.Div([
+                html.H6("✅ Reasons to BUY", style={'color': '#00ff88', 'marginBottom': '10px', 'fontSize': '0.9rem'}),
+                html.Ul([
+                    html.Li(reason, style={'marginBottom': '6px', 'color': '#ccccdd', 'fontSize': '0.8rem'})
+                    for reason in result['buy_reasons']
+                ], style={'paddingLeft': '20px', 'margin': '0'}) if result['buy_reasons'] else html.P("No strong buy signals", className="text-muted", style={'fontSize': '0.8rem'})
+            ], style={
+                'background': 'rgba(0, 255, 136, 0.05)',
+                'borderLeft': '4px solid #00ff88',
+                'padding': '12px 15px',
+                'borderRadius': '0 10px 10px 0',
+                'marginBottom': '10px'
+            }),
+            html.Div([
+                html.H6("⚠️ Caution", style={'color': '#ff6b35', 'marginBottom': '10px', 'fontSize': '0.9rem'}),
+                html.Ul([
+                    html.Li(reason, style={'marginBottom': '6px', 'color': '#ccccdd', 'fontSize': '0.8rem'})
+                    for reason in result['sell_reasons']
+                ], style={'paddingLeft': '20px', 'margin': '0'}) if result['sell_reasons'] else html.P("No major concerns", className="text-muted", style={'fontSize': '0.8rem'})
+            ], style={
+                'background': 'rgba(255, 107, 53, 0.05)',
+                'borderLeft': '4px solid #ff6b35',
+                'padding': '12px 15px',
+                'borderRadius': '0 10px 10px 0'
+            }),
+        ]),
+        
+        # Additional info
+        html.Div([
+            html.Span(f"Volatility: {result['volatility']:.1f}%", className="me-4", style={'color': '#8888aa'}),
+            html.Span(f"52W High: {result['pct_from_high']:+.1f}%", className="me-4", style={'color': '#8888aa'}),
+            html.Span(f"P/E: {result['pe_ratio']:.1f}" if result['pe_ratio'] else "P/E: N/A", style={'color': '#8888aa'}),
+        ], className="mt-3 text-center", style={'fontSize': '0.85rem'}),
+        
+    ], className="chart-container", style={'borderLeft': f'4px solid {result["signal_color"]}'})
+
+
+# ============================================
+# NEWS CALLBACK
+# ============================================
+
+def fetch_stock_news():
+    """Fetch news from multiple stocks"""
+    import yfinance as yf
+    import time
+    
+    # Use a subset of stocks to get diverse news
+    news_tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'AMD', 'NFLX', 'DIS',
+                   'BA', 'JPM', 'GS', 'V', 'MA', 'PFE', 'JNJ', 'MRK', 'UNH', 'XOM', 'CVX']
+    
+    all_news = []
+    
+    for ticker in news_tickers[:15]:  # Limit to prevent rate limiting
+        try:
+            stock = yf.Ticker(ticker)
+            news = stock.news
+            
+            if news:
+                for item in news[:3]:  # Get top 3 news per stock
+                    # Handle nested structure
+                    content = item.get('content', item)
+                    title = content.get('title', item.get('title', 'No title'))
+                    link = content.get('clickThroughUrl', {}).get('url', item.get('link', '#'))
+                    publisher = content.get('provider', {}).get('displayName', item.get('publisher', 'Unknown'))
+                    pub_time = content.get('pubDate', item.get('providerPublishTime', 0))
+                    
+                    # Categorize news
+                    title_lower = title.lower()
+                    if any(w in title_lower for w in ['earnings', 'revenue', 'profit', 'quarter', 'eps']):
+                        category = 'earnings'
+                    elif any(w in title_lower for w in ['merger', 'acquire', 'acquisition', 'deal', 'buyout']):
+                        category = 'mergers'
+                    elif any(w in title_lower for w in ['fda', 'approval', 'government', 'regulatory', 'sec', 'congress']):
+                        category = 'fda'
+                    elif any(w in title_lower for w in ['upgrade', 'downgrade', 'target', 'rating', 'analyst']):
+                        category = 'upgrades'
+                    else:
+                        category = 'general'
+                    
+                    all_news.append({
+                        'ticker': ticker,
+                        'title': title,
+                        'link': link,
+                        'publisher': publisher,
+                        'time': pub_time,
+                        'category': category
+                    })
+            time.sleep(0.2)  # Rate limit protection
+        except Exception as e:
+            continue
+    
+    # Sort by time (newest first)
+    all_news.sort(key=lambda x: x.get('time', 0), reverse=True)
+    return all_news[:50]  # Return top 50 news items
 
 
 @app.callback(
     [Output("news-container", "children"),
      Output("news-store", "data")],
     [Input("refresh-news-btn", "n_clicks"),
-     Input("news-interval", "n_intervals")],
-    prevent_initial_call=False  # Auto-load on page open
-)
-def update_news(n_clicks, n_intervals):
-    """Fetch and display latest news"""
-    import sys
-    
-    def log(msg):
-        print(f"[NEWS-CB] {msg}")
-        sys.stdout.flush()
-    
-    log(f"Fetching news (clicks={n_clicks}, intervals={n_intervals})")
-    
-    try:
-        # Fetch news
-        news_items = fetch_stock_news(max_news=30)
-        
-        if not news_items:
-            empty_msg = html.Div([
-                html.P("📭 No news available at the moment.", className="text-muted"),
-                html.P("Click 'Refresh News' to try again.", className="text-muted small")
-            ], style={'padding': '20px', 'textAlign': 'center'})
-            return empty_msg, []
-        
-        # Create news cards
-        news_cards = [create_news_card(item) for item in news_items]
-        
-        # Add header with count and timestamp
-        header = html.Div([
-            html.Span(f"📰 {len(news_items)} Latest Headlines", style={
-                'color': '#ffd93d',
-                'fontFamily': 'JetBrains Mono',
-                'fontSize': '0.9rem',
-                'fontWeight': '600'
-            }),
-            html.Span(f" • Updated {datetime.now().strftime('%H:%M:%S')}", style={
-                'color': '#8888aa',
-                'fontSize': '0.75rem',
-                'marginLeft': '10px'
-            })
-        ], style={'marginBottom': '15px'})
-        
-        log(f"Displaying {len(news_items)} news items")
-        
-        return html.Div([header] + news_cards), news_items
-        
-    except Exception as e:
-        import traceback
-        log(f"Error fetching news: {e}")
-        error_msg = html.Div([
-            html.P(f"❌ Error loading news: {str(e)}", className="text-danger"),
-            html.P("Try refreshing in a moment.", className="text-muted small")
-        ])
-        return error_msg, []
-
-
-@app.callback(
-    Output("news-container", "children", allow_duplicate=True),
-    [Input("filter-all", "n_clicks"),
-     Input("filter-ma", "n_clicks"),
-     Input("filter-reg", "n_clicks"),
-     Input("filter-earn", "n_clicks"),
-     Input("filter-analyst", "n_clicks"),
-     Input("filter-prod", "n_clicks"),
-     Input("filter-market", "n_clicks"),
-     Input("filter-leader", "n_clicks")],
+     Input("news-interval", "n_intervals"),
+     Input("filter-all", "n_clicks"),
+     Input("filter-earnings", "n_clicks"),
+     Input("filter-mergers", "n_clicks"),
+     Input("filter-fda", "n_clicks"),
+     Input("filter-upgrades", "n_clicks")],
     [State("news-store", "data")],
-    prevent_initial_call=True
+    prevent_initial_call=False
 )
-def filter_news(all_clicks, ma_clicks, reg_clicks, earn_clicks, analyst_clicks, prod_clicks, market_clicks, leader_clicks, news_data):
-    """Filter news by category"""
+def update_news_display(refresh_clicks, n_intervals, all_clicks, earnings_clicks, mergers_clicks, fda_clicks, upgrades_clicks, stored_news):
+    """Update news display based on filter selection"""
     from dash import ctx
     
-    if not news_data:
-        return html.P("No news to filter. Click 'Refresh News' first.", className="text-muted")
-    
-    # Determine which filter was clicked
     triggered = ctx.triggered_id
     
-    category_map = {
-        'filter-all': None,  # Show all
-        'filter-ma': '🤝 M&A',
-        'filter-reg': '🏛️ Regulatory',
-        'filter-earn': '📊 Earnings',
-        'filter-analyst': '📈 Analyst',
-        'filter-prod': '🚀 Product',
-        'filter-market': '📉 Market',
-        'filter-leader': '👔 Leadership'
+    # Determine if we need to fetch new data
+    need_fetch = triggered in [None, "refresh-news-btn", "news-interval"] or stored_news is None
+    
+    if need_fetch:
+        news_data = fetch_stock_news()
+    else:
+        news_data = stored_news or []
+    
+    # Determine filter
+    filter_map = {
+        "filter-earnings": "earnings",
+        "filter-mergers": "mergers",
+        "filter-fda": "fda",
+        "filter-upgrades": "upgrades"
     }
     
-    filter_category = category_map.get(triggered)
+    category_filter = filter_map.get(triggered, None)
     
-    # Filter news
-    if filter_category is None:
-        filtered = news_data
+    if category_filter:
+        filtered_news = [n for n in news_data if n.get('category') == category_filter]
     else:
-        filtered = [item for item in news_data if item.get('category') == filter_category]
+        filtered_news = news_data
     
-    if not filtered:
-        return html.Div([
-            html.P(f"No {filter_category or 'news'} found.", className="text-muted"),
-            html.P("Try another category or refresh news.", className="text-muted small")
-        ])
+    if not filtered_news:
+        return html.P("No news found. Click 'Refresh News' to load.", className="text-muted"), news_data
     
-    # Create cards
-    news_cards = [create_news_card(item) for item in filtered]
+    # Build news cards
+    news_cards = []
+    for item in filtered_news[:30]:
+        cat_colors = {
+            'earnings': '#00d4ff',
+            'mergers': '#ff00aa',
+            'fda': '#00ff88',
+            'upgrades': '#ffd93d',
+            'general': '#8888aa'
+        }
+        cat_color = cat_colors.get(item.get('category', 'general'), '#8888aa')
+        
+        news_cards.append(
+            html.Div([
+                html.Div([
+                    html.Span(item['ticker'], style={
+                        'background': f'{cat_color}22',
+                        'color': cat_color,
+                        'padding': '4px 10px',
+                        'borderRadius': '12px',
+                        'fontWeight': '600',
+                        'fontSize': '0.75rem',
+                        'marginRight': '10px',
+                        'fontFamily': 'JetBrains Mono'
+                    }),
+                    html.Span(item.get('category', '').upper(), style={
+                        'color': '#666',
+                        'fontSize': '0.7rem',
+                        'fontFamily': 'JetBrains Mono'
+                    })
+                ], style={'marginBottom': '8px'}),
+                html.A(
+                    item['title'],
+                    href=item['link'],
+                    target="_blank",
+                    style={
+                        'color': '#ffffff',
+                        'textDecoration': 'none',
+                        'fontWeight': '500',
+                        'fontSize': '0.9rem',
+                        'display': 'block',
+                        'marginBottom': '5px'
+                    }
+                ),
+                html.Span(f"📰 {item['publisher']}", style={
+                    'color': '#666',
+                    'fontSize': '0.75rem'
+                })
+            ], style={
+                'background': 'rgba(255,255,255,0.02)',
+                'padding': '15px',
+                'borderRadius': '10px',
+                'marginBottom': '10px',
+                'borderLeft': f'3px solid {cat_color}'
+            })
+        )
     
-    # Header
-    header = html.Div([
-        html.Span(f"📰 {len(filtered)} Headlines", style={
-            'color': '#ffd93d',
-            'fontFamily': 'JetBrains Mono',
-            'fontSize': '0.9rem',
-            'fontWeight': '600'
-        }),
-        html.Span(f" • Filter: {filter_category or 'All'}", style={
-            'color': '#8888aa',
-            'fontSize': '0.75rem',
-            'marginLeft': '10px'
-        })
-    ], style={'marginBottom': '15px'})
-    
-    return html.Div([header] + news_cards)
+    return html.Div(news_cards), news_data
 
 
-def create_mover_card(stock: dict, card_type: str) -> html.Div:
-    """Create a styled card for market mover stock"""
+# ============================================
+# MARKET MOVERS CALLBACK
+# ============================================
+
+def fetch_market_movers():
+    """Fetch market movers data"""
+    import yfinance as yf
+    import time
     
-    # Color scheme based on card type
-    colors = {
-        'active': {'accent': '#00d4ff', 'bg': 'rgba(0, 212, 255, 0.1)'},
-        'gainer': {'accent': '#00ff88', 'bg': 'rgba(0, 255, 136, 0.1)'},
-        'loser': {'accent': '#ff6b35', 'bg': 'rgba(255, 107, 53, 0.1)'},
-        'high': {'accent': '#00ff88', 'bg': 'rgba(0, 255, 136, 0.1)'},
-        'low': {'accent': '#ff6b35', 'bg': 'rgba(255, 107, 53, 0.1)'},
-        'dividend': {'accent': '#ffd93d', 'bg': 'rgba(255, 217, 61, 0.1)'}
+    # Use predefined lists for movers
+    movers = {
+        'most_active': [],
+        'gainers': [],
+        'losers': [],
+        'high_52w': [],
+        'low_52w': [],
+        'dividends': []
     }
     
-    color = colors.get(card_type, colors['active'])
-    change_color = '#00ff88' if stock['change_pct'] >= 0 else '#ff6b35'
+    # Tickers to check
+    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'AMD', 'NFLX', 'DIS',
+               'BA', 'JPM', 'GS', 'V', 'MA', 'PFE', 'JNJ', 'MRK', 'UNH', 'XOM', 'CVX',
+               'WMT', 'HD', 'CRM', 'ORCL', 'INTC', 'CSCO', 'VZ', 'T', 'KO', 'PEP']
     
-    # Build content based on card type
-    if card_type == 'active':
-        # Show volume info
-        vol_str = f"{stock['volume']/1e6:.1f}M" if stock['volume'] >= 1e6 else f"{stock['volume']/1e3:.0f}K"
-        detail = html.Span(f"Vol: {vol_str}", style={'color': '#8888aa', 'fontSize': '0.75rem'})
-    elif card_type in ['gainer', 'loser']:
-        # Show change %
-        detail = html.Span(f"{stock['change_pct']:+.2f}%", style={
-            'color': change_color, 'fontSize': '0.85rem', 'fontWeight': '600'
-        })
-    elif card_type == 'high':
-        # Show % from high
-        detail = html.Span(f"52W High: ${stock['week_52_high']:.2f}", style={
-            'color': '#8888aa', 'fontSize': '0.75rem'
-        })
-    elif card_type == 'low':
-        # Show % from low
-        detail = html.Span(f"52W Low: ${stock['week_52_low']:.2f}", style={
-            'color': '#8888aa', 'fontSize': '0.75rem'
-        })
-    elif card_type == 'dividend':
-        # Show dividend yield
-        detail = html.Span(f"Yield: {stock['dividend_yield']:.2f}%", style={
-            'color': '#ffd93d', 'fontSize': '0.85rem', 'fontWeight': '600'
-        })
-    else:
-        detail = None
+    stock_data = []
     
-    return html.Div([
-        html.Div([
-            html.Span(stock['ticker'], style={
-                'fontFamily': 'JetBrains Mono',
-                'fontWeight': '700',
-                'fontSize': '1rem',
-                'color': color['accent']
-            }),
-            html.Span(f"${stock['price']:.2f}", style={
-                'fontFamily': 'JetBrains Mono',
-                'fontSize': '0.9rem',
-                'color': '#ffffff',
-                'marginLeft': 'auto'
-            }),
-        ], style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '4px'}),
-        html.Div([
-            html.Span(stock.get('name', '')[:20], style={
-                'color': '#666688',
-                'fontSize': '0.7rem',
-                'marginRight': '10px'
-            }),
-            detail
-        ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center'}),
-    ], style={
-        'background': color['bg'],
-        'borderLeft': f"3px solid {color['accent']}",
-        'padding': '8px 12px',
-        'marginBottom': '6px',
-        'borderRadius': '0 8px 8px 0'
-    })
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period='5d')
+            info = stock.info
+            
+            if len(hist) >= 2:
+                current = hist['Close'].iloc[-1]
+                prev = hist['Close'].iloc[-2]
+                change = ((current - prev) / prev) * 100
+                volume = hist['Volume'].iloc[-1]
+                
+                high_52w = info.get('fiftyTwoWeekHigh', 0)
+                low_52w = info.get('fiftyTwoWeekLow', 0)
+                div_yield = info.get('dividendYield', 0) or 0
+                
+                stock_data.append({
+                    'ticker': ticker,
+                    'price': current,
+                    'change': change,
+                    'volume': volume,
+                    'high_52w': high_52w,
+                    'low_52w': low_52w,
+                    'pct_from_high': ((current - high_52w) / high_52w * 100) if high_52w else 0,
+                    'pct_from_low': ((current - low_52w) / low_52w * 100) if low_52w else 0,
+                    'div_yield': div_yield * 100
+                })
+            time.sleep(0.15)
+        except:
+            continue
+    
+    if stock_data:
+        # Sort for different categories
+        movers['most_active'] = sorted(stock_data, key=lambda x: x['volume'], reverse=True)[:10]
+        movers['gainers'] = sorted(stock_data, key=lambda x: x['change'], reverse=True)[:10]
+        movers['losers'] = sorted(stock_data, key=lambda x: x['change'])[:10]
+        movers['high_52w'] = sorted(stock_data, key=lambda x: x['pct_from_high'], reverse=True)[:10]
+        movers['low_52w'] = sorted(stock_data, key=lambda x: x['pct_from_low'])[:10]
+        movers['dividends'] = sorted(stock_data, key=lambda x: x['div_yield'], reverse=True)[:10]
+    
+    return movers
 
 
 @app.callback(
-    [Output("most-active-list", "children"),
-     Output("top-gainers-list", "children"),
-     Output("top-losers-list", "children"),
-     Output("week52-high-list", "children"),
-     Output("week52-low-list", "children"),
-     Output("dividend-list", "children")],
+    Output("market-movers-container", "children"),
     [Input("refresh-movers-btn", "n_clicks"),
      Input("movers-interval", "n_intervals")],
-    prevent_initial_call=False  # Auto-load on page open
+    prevent_initial_call=False
 )
 def update_market_movers(n_clicks, n_intervals):
-    """Fetch and display market movers"""
-    import sys
+    """Update market movers display"""
     
-    def log(msg):
-        print(f"[MOVERS-CB] {msg}")
-        sys.stdout.flush()
+    movers = fetch_market_movers()
     
-    log(f"Loading market movers (n_clicks={n_clicks})")
+    if not any(movers.values()):
+        return html.P("Loading market data... Click 'Refresh' if this persists.", className="text-muted")
     
-    try:
-        log("Fetching market movers...")
-        data = fetch_market_movers()
-        
-        log(f"Found: active={len(data['most_active'])}, gainers={len(data['top_gainers'])}, losers={len(data['top_losers'])}")
-        
-        # Create cards for each category
-        def make_list(stocks, card_type, empty_msg):
-            if not stocks:
-                return html.P(empty_msg, className="text-muted small")
+    def create_mover_card(stocks, title, icon, color, value_key='change', value_format='+.2f%'):
+        items = []
+        for stock in stocks[:5]:
+            val = stock.get(value_key, 0)
+            if 'volume' in value_key:
+                val_str = f"{val/1e6:.1f}M"
+            elif '%' in value_format:
+                val_str = f"{val:{value_format.replace('%', '')}}%"
+            else:
+                val_str = f"{val:{value_format}}"
             
-            header = html.Div([
-                html.Span(f"{len(stocks)} stocks", style={
-                    'color': '#00d4ff',
-                    'fontFamily': 'JetBrains Mono',
-                    'fontSize': '0.75rem'
-                }),
-                html.Span(f" • {data['last_updated']}", style={
-                    'color': '#8888aa',
-                    'fontSize': '0.7rem'
-                })
-            ], style={'marginBottom': '8px'})
-            
-            cards = [create_mover_card(s, card_type) for s in stocks]
-            return html.Div([header] + cards)
+            items.append(
+                html.Div([
+                    html.Span(stock['ticker'], style={
+                        'fontFamily': 'JetBrains Mono',
+                        'fontWeight': '600',
+                        'color': color,
+                        'width': '60px',
+                        'display': 'inline-block'
+                    }),
+                    html.Span(f"${stock['price']:.2f}", style={
+                        'color': '#ffffff',
+                        'width': '80px',
+                        'display': 'inline-block'
+                    }),
+                    html.Span(val_str, style={
+                        'color': '#00ff88' if val > 0 else '#ff4444' if val < 0 else '#888',
+                        'fontFamily': 'JetBrains Mono',
+                        'fontWeight': '600'
+                    })
+                ], style={'padding': '8px 0', 'borderBottom': '1px solid #333'})
+            )
         
-        most_active = make_list(data['most_active'], 'active', "No active stocks found")
-        top_gainers = make_list(data['top_gainers'], 'gainer', "No gainers today")
-        top_losers = make_list(data['top_losers'], 'loser', "No losers today")
-        week52_high = make_list(data['week_52_high'], 'high', "No stocks near 52-week highs")
-        week52_low = make_list(data['week_52_low'], 'low', "No stocks near 52-week lows")
-        dividend = make_list(data['dividend_stocks'], 'dividend', "No dividend stocks found")
-        
-        log("Returning market movers to UI")
-        return most_active, top_gainers, top_losers, week52_high, week52_low, dividend
-        
-    except Exception as e:
-        import traceback
-        log(f"Error: {e}")
-        log(traceback.format_exc())
-        error_msg = html.P(f"Error loading: {str(e)[:50]}", className="text-danger small")
-        return [error_msg] * 6
-
-
-def create_recommendation_card(stock: dict) -> html.Div:
-    """Create a detailed recommendation card with buy reasons"""
-    
-    # Signal colors
-    signal_colors = {
-        'STRONG BUY': {'bg': 'rgba(0, 255, 136, 0.2)', 'text': '#00ff88', 'border': '#00ff88'},
-        'BUY': {'bg': 'rgba(0, 212, 255, 0.15)', 'text': '#00d4ff', 'border': '#00d4ff'},
-        'WATCH': {'bg': 'rgba(255, 217, 61, 0.15)', 'text': '#ffd93d', 'border': '#ffd93d'}
-    }
-    
-    signal = stock.get('signal', 'WATCH')
-    colors = signal_colors.get(signal, signal_colors['WATCH'])
-    
-    # Build reason list
-    reason_items = [
-        html.Li(reason, style={
-            'color': '#ccccdd',
-            'fontSize': '0.8rem',
-            'marginBottom': '4px',
-            'lineHeight': '1.4'
-        }) for reason in stock.get('reasons', [])
-    ]
-    
-    return html.Div([
-        # Header: Ticker, Signal, Price
-        html.Div([
+        return dbc.Col([
             html.Div([
-                html.Span(stock['ticker'], style={
-                    'fontFamily': 'JetBrains Mono',
-                    'fontWeight': '700',
-                    'fontSize': '1.3rem',
-                    'color': colors['text']
-                }),
-                html.Span(f" • {stock.get('name', '')}", style={
-                    'color': '#8888aa',
-                    'fontSize': '0.8rem',
-                    'marginLeft': '8px'
-                }),
-            ]),
-            html.Div([
-                html.Span(signal, style={
-                    'background': colors['bg'],
-                    'color': colors['text'],
-                    'padding': '4px 12px',
-                    'borderRadius': '15px',
-                    'fontSize': '0.75rem',
-                    'fontWeight': '700',
-                    'fontFamily': 'JetBrains Mono',
-                    'border': f"1px solid {colors['border']}"
-                }),
-            ])
-        ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '10px'}),
-        
-        # Price and metrics row
-        html.Div([
-            html.Div([
-                html.Span(f"${stock['price']:.2f}", style={
-                    'fontFamily': 'JetBrains Mono',
-                    'fontSize': '1.4rem',
-                    'fontWeight': '600',
-                    'color': '#ffffff'
-                }),
-            ]),
-            html.Div([
-                html.Span(f"Score: {stock['score']}/100", style={
-                    'background': 'rgba(255,255,255,0.1)',
-                    'padding': '3px 10px',
-                    'borderRadius': '10px',
-                    'fontSize': '0.75rem',
-                    'color': colors['text'],
-                    'fontFamily': 'JetBrains Mono'
-                }),
-            ])
-        ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '12px'}),
-        
-        # Quick stats
-        html.Div([
-            html.Span(f"5D: {stock['ret_5d']:+.1f}%", style={
-                'color': '#00ff88' if stock['ret_5d'] >= 0 else '#ff6b35',
-                'fontSize': '0.75rem',
-                'marginRight': '12px',
-                'fontFamily': 'JetBrains Mono'
-            }),
-            html.Span(f"20D: {stock['ret_20d']:+.1f}%", style={
-                'color': '#00ff88' if stock['ret_20d'] >= 0 else '#ff6b35',
-                'fontSize': '0.75rem',
-                'marginRight': '12px',
-                'fontFamily': 'JetBrains Mono'
-            }),
-            html.Span(f"RSI: {stock['rsi']:.0f}", style={
-                'color': '#8888aa',
-                'fontSize': '0.75rem',
-                'fontFamily': 'JetBrains Mono'
-            }),
-        ], style={'marginBottom': '12px', 'paddingBottom': '10px', 'borderBottom': '1px solid rgba(255,255,255,0.1)'}),
-        
-        # Why Buy section
-        html.Div([
-            html.Span("💡 Why Buy:", style={
-                'color': '#ffd93d',
-                'fontWeight': '600',
-                'fontSize': '0.85rem',
-                'display': 'block',
-                'marginBottom': '8px'
-            }),
-            html.Ul(reason_items, style={
-                'margin': '0',
-                'paddingLeft': '20px'
+                html.H5(f"{icon} {title}", style={'color': color, 'marginBottom': '15px', 'fontFamily': 'JetBrains Mono'}),
+                html.Div(items)
+            ], style={
+                'background': f'{color}08',
+                'borderRadius': '12px',
+                'padding': '20px',
+                'border': f'1px solid {color}22'
             })
-        ]),
-        
-    ], style={
-        'background': 'linear-gradient(135deg, rgba(26,26,36,1) 0%, rgba(30,30,45,1) 100%)',
-        'border': f'1px solid {colors["border"]}40',
-        'borderLeft': f'4px solid {colors["border"]}',
-        'borderRadius': '12px',
-        'padding': '16px 20px',
-        'marginBottom': '15px',
-        'boxShadow': '0 4px 15px rgba(0,0,0,0.2)'
-    })
+        ], md=4, className="mb-3")
+    
+    return dbc.Row([
+        create_mover_card(movers['gainers'], 'Top Gainers', '📈', '#00ff88', 'change', '+.2f%'),
+        create_mover_card(movers['losers'], 'Top Losers', '📉', '#ff4444', 'change', '+.2f%'),
+        create_mover_card(movers['most_active'], 'Most Active', '🔥', '#ffd93d', 'volume', '.1fM'),
+        create_mover_card(movers['high_52w'], 'Near 52W High', '🎯', '#00d4ff', 'pct_from_high', '+.1f%'),
+        create_mover_card(movers['low_52w'], 'Near 52W Low', '💎', '#ff00aa', 'pct_from_low', '+.1f%'),
+        create_mover_card(movers['dividends'], 'Top Dividends', '💵', '#00ff88', 'div_yield', '.2f%'),
+    ])
+
+
+# ============================================
+# BUY RECOMMENDATIONS CALLBACK
+# ============================================
+
+def get_buy_recommendations(price_range='all'):
+    """Get AI-powered buy recommendations"""
+    import yfinance as yf
+    import time
+    
+    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'AMD', 'NFLX', 'DIS',
+               'BA', 'JPM', 'GS', 'V', 'MA', 'PFE', 'JNJ', 'MRK', 'UNH', 'XOM', 'CVX',
+               'WMT', 'HD', 'CRM', 'ORCL', 'INTC', 'CSCO', 'VZ', 'T', 'KO', 'PEP',
+               'COST', 'NKE', 'SBUX', 'PYPL', 'SQ', 'UBER', 'LYFT', 'SNAP', 'PINS']
+    
+    recommendations = []
+    
+    for ticker in tickers:
+        try:
+            result = analyze_single_stock(ticker)
+            if 'error' not in result and result.get('score', 0) >= 50:
+                recommendations.append(result)
+            time.sleep(0.2)
+        except:
+            continue
+    
+    # Sort by score
+    recommendations.sort(key=lambda x: x.get('score', 0), reverse=True)
+    
+    return recommendations[:20]
 
 
 @app.callback(
-    Output("recommendations-store", "data"),
-    [Input("refresh-recommendations-btn", "n_clicks"),
-     Input("recommendations-interval", "n_intervals")],
-    prevent_initial_call=False  # Auto-load on page open
+    [Output("buy-recommendations-container", "children"),
+     Output("recommendations-store", "data")],
+    [Input("get-recommendations-btn", "n_clicks"),
+     Input("price-range-filter", "value")],
+    [State("recommendations-store", "data")],
+    prevent_initial_call=False
 )
-def fetch_recommendations(n_clicks, n_intervals):
-    """Fetch and store buy recommendations (separate from display)"""
-    import sys
+def update_buy_recommendations(n_clicks, price_range, stored_data):
+    """Update buy recommendations based on price filter"""
+    from dash import ctx
     
-    def log(msg):
-        print(f"[RECO-FETCH] {msg}")
-        sys.stdout.flush()
+    triggered = ctx.triggered_id
     
-    log(f"Fetching recommendations (n_clicks={n_clicks})")
-    
-    try:
-        recommendations = generate_buy_recommendations(num_picks=30)  # Get plenty to filter
-        log(f"Fetched {len(recommendations)} recommendations")
-        
-        # Convert to serializable format and store
-        return {
-            'recommendations': recommendations,
-            'timestamp': datetime.now().strftime('%H:%M:%S')
-        }
-    except Exception as e:
-        log(f"Error fetching: {e}")
-        return {'recommendations': [], 'timestamp': datetime.now().strftime('%H:%M:%S')}
-
-
-@app.callback(
-    Output("recommendations-list", "children"),
-    [Input("recommendations-store", "data"),
-     Input("price-range-filter", "value")]
-)
-def display_recommendations(stored_data, price_range):
-    """Display recommendations filtered by price range (instant filtering from stored data)"""
-    import sys
-    
-    def log(msg):
-        print(f"[RECO-DISPLAY] {msg}")
-        sys.stdout.flush()
-    
-    if not stored_data or not stored_data.get('recommendations'):
-        return html.Div([
-            html.P("📊 Loading recommendations...", className="text-muted"),
-            html.P("Please wait while we analyze stocks.", className="text-muted small")
-        ], style={'padding': '20px', 'textAlign': 'center'})
-    
-    recommendations = stored_data['recommendations']
-    timestamp = stored_data.get('timestamp', '')
-    
-    log(f"Filtering {len(recommendations)} recommendations by price_range={price_range}")
+    # Fetch if button clicked or first load
+    if triggered in [None, "get-recommendations-btn"] or stored_data is None:
+        recommendations = get_buy_recommendations()
+    else:
+        recommendations = stored_data or []
     
     # Apply price filter
     if price_range and price_range != 'all':
-        if price_range == '500-1000':
-            recommendations = [r for r in recommendations if r['price'] >= 500]
-        elif price_range == '100-500':
-            recommendations = [r for r in recommendations if 100 <= r['price'] < 500]
-        elif price_range == '10-100':
-            recommendations = [r for r in recommendations if 10 <= r['price'] < 100]
-        elif price_range == '0-10':
-            recommendations = [r for r in recommendations if r['price'] < 10]
+        ranges = {
+            '500-1000': (500, float('inf')),
+            '100-500': (100, 500),
+            '10-100': (10, 100),
+            '0-10': (0, 10)
+        }
+        low, high = ranges.get(price_range, (0, float('inf')))
+        filtered = [r for r in recommendations if low <= r.get('price', 0) < high]
+    else:
+        filtered = recommendations
     
-    # Limit to top 10 after filtering
-    recommendations = recommendations[:10]
+    if not filtered:
+        return html.P("No recommendations found in this price range. Click 'Get Recommendations' to fetch data.", className="text-muted"), recommendations
     
-    log(f"After filtering: {len(recommendations)} recommendations")
-    
-    if not recommendations:
-        # Show helpful message based on filter
-        price_msg = {
-            'all': 'any price range',
-            '500-1000': '$500-$1000+',
-            '100-500': '$100-$500',
-            '10-100': '$10-$100',
-            '0-10': '$10 or below'
-        }.get(price_range, 'selected range')
+    # Build recommendation cards
+    cards = []
+    for rec in filtered[:15]:
+        signal_bg = f"{rec['signal_color']}22"
         
-        return html.Div([
-            html.P(f"📊 No strong buy signals found for stocks in {price_msg}.", className="text-muted"),
-            html.P("Try a different price range or click 'Get Picks' to refresh!", className="text-muted small")
-        ], style={'padding': '20px', 'textAlign': 'center'})
-    
-    # Price range label
-    price_label = {
-        'all': 'All Prices',
-        '500-1000': '$500-$1000+',
-        '100-500': '$100-$500',
-        '10-100': '$10-$100',
-        '0-10': '$10 or Below'
-    }.get(price_range, 'All Prices')
-    
-    # Header
-    header = html.Div([
-        html.Div([
-            html.Span(f"🎯 Top {len(recommendations)} Buy Picks", style={
-                'color': '#00ff88',
-                'fontFamily': 'JetBrains Mono',
-                'fontSize': '1rem',
-                'fontWeight': '600'
-            }),
-            html.Span(f" • {price_label}", style={
-                'color': '#ffd93d',
-                'fontSize': '0.8rem',
-                'marginLeft': '10px',
-                'background': 'rgba(255, 217, 61, 0.1)',
-                'padding': '2px 8px',
-                'borderRadius': '8px'
-            }),
-            html.Span(f" • Updated {timestamp}", style={
-                'color': '#8888aa',
-                'fontSize': '0.75rem',
-                'marginLeft': '10px'
+        top_reasons = rec.get('buy_reasons', [])[:3]
+        
+        cards.append(
+            html.Div([
+                html.Div([
+                    html.Div([
+                        html.Span(rec['ticker'], style={
+                            'fontFamily': 'JetBrains Mono',
+                            'fontWeight': '700',
+                            'fontSize': '1.3rem',
+                            'color': rec['signal_color']
+                        }),
+                        html.Span(f" ${rec['price']:.2f}", style={
+                            'color': '#ffffff',
+                            'fontSize': '1.1rem',
+                            'fontFamily': 'JetBrains Mono'
+                        }),
+                    ]),
+                    html.Span(rec['signal'], style={
+                        'background': signal_bg,
+                        'color': rec['signal_color'],
+                        'padding': '4px 12px',
+                        'borderRadius': '15px',
+                        'fontSize': '0.8rem',
+                        'fontWeight': '600',
+                        'fontFamily': 'JetBrains Mono'
+                    })
+                ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '10px'}),
+                
+                html.Div([
+                    html.Span(f"Score: {rec['score']}/100", style={'color': '#00d4ff', 'marginRight': '15px'}),
+                    html.Span(f"5D: {rec['ret_5d']:+.1f}%", style={
+                        'color': '#00ff88' if rec['ret_5d'] > 0 else '#ff4444',
+                        'marginRight': '15px'
+                    }),
+                    html.Span(f"RSI: {rec.get('rsi', 50):.0f}", style={'color': '#ffd93d'})
+                ], style={'marginBottom': '10px', 'fontSize': '0.85rem', 'fontFamily': 'JetBrains Mono'}),
+                
+                html.Div([
+                    html.Span("✅ ", style={'color': '#00ff88'}),
+                    html.Span(" • ".join(top_reasons[:2]) if top_reasons else "Strong fundamentals", 
+                             style={'color': '#aaaacc', 'fontSize': '0.8rem'})
+                ])
+            ], style={
+                'background': 'rgba(255,255,255,0.02)',
+                'padding': '15px',
+                'borderRadius': '12px',
+                'marginBottom': '10px',
+                'borderLeft': f'4px solid {rec["signal_color"]}'
             })
-        ]),
-        html.P("Based on momentum, technicals, volume & fundamentals analysis", 
-               className="text-muted small mb-0 mt-1")
-    ], style={'marginBottom': '20px'})
+        )
     
-    # Create cards
-    cards = [create_recommendation_card(rec) for rec in recommendations]
-    
-    # Split into columns for better layout
-    left_cards = cards[:5]
-    right_cards = cards[5:]
-    
-    content = dbc.Row([
-        dbc.Col(left_cards, md=6),
-        dbc.Col(right_cards, md=6)
-    ])
-    
-    return html.Div([header, content])
+    return html.Div(cards), recommendations
 
 
 # Run the app
